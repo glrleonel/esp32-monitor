@@ -6,19 +6,26 @@ module.exports = async function handler(req, res) {
   try {
     const data = req.body || {};
 
-const payload = {
-  device_id: data.device_id || null,
-  ip: data.ip || null,
-  last_capture: data.last_capture || null,
-  status: data.status || "ok",
-  temperatura: data.temperatura ?? null,
-  temp_sem_linha: data.temp_sem_linha ?? null,
-  temp_vermelha: data.temp_vermelha ?? null,
-  temp_rosa: data.temp_rosa ?? null,
-  temp_verde: data.temp_verde ?? null,
-  temp_preta: data.temp_preta ?? null,
-  error: data.error || null
-};
+    const payload = {
+      device_id: data.device_id || null,
+      ip: data.ip || null,
+      last_capture: data.last_capture || null,
+      status: data.status || "ok",
+
+      temperatura: data.temperatura ?? null,
+      temp_sem_linha: data.temp_sem_linha ?? null,
+      temp_vermelha: data.temp_vermelha ?? null,
+      temp_rosa: data.temp_rosa ?? null,
+      temp_verde: data.temp_verde ?? null,
+      temp_preta: data.temp_preta ?? null,
+
+      cam_ok: data.cam_ok ?? null,
+      sd_ok: data.sd_ok ?? null,
+      cam_last_photo: data.cam_last_photo ?? null,
+      cam_timestamp: data.cam_timestamp ?? null,
+
+      error: data.error || null
+    };
 
     const response = await fetch(
       `${process.env.SUPABASE_URL}/rest/v1/heartbeats`,
