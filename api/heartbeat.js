@@ -1,10 +1,10 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "method_not_allowed" });
   }
 
   try {
-    const data = req.body;
+    const data = req.body || {};
 
     const payload = {
       device_id: data.device_id || null,
@@ -29,20 +29,20 @@ export default async function handler(req, res) {
       }
     );
 
-    const result = await response.text();
+    const resultText = await response.text();
 
     if (!response.ok) {
       return res.status(500).json({
         ok: false,
         error: "supabase_insert_failed",
-        detail: result
+        detail: resultText
       });
     }
 
     return res.status(200).json({
       ok: true,
       saved: true,
-      result: JSON.parse(result)
+      result: JSON.parse(resultText)
     });
 
   } catch (error) {
@@ -51,6 +51,4 @@ export default async function handler(req, res) {
       error: error.message
     });
   }
-}
-  }
-}
+};
