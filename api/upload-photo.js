@@ -14,6 +14,24 @@ function cleanPath(value) {
     .replace(/[^a-zA-Z0-9_\-./]/g, "_");
 }
 
+function parseCapturedAt(capturedAt) {
+  if (!capturedAt) return null;
+
+  const value = String(capturedAt);
+
+  if (value.startsWith("teste_") || value.startsWith("sem_hora")) {
+    return null;
+  }
+
+  const parsedDate = new Date(value.replace(" ", "T"));
+
+  if (isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toISOString();
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "method_not_allowed" });
@@ -33,11 +51,16 @@ module.exports = async function handler(req, res) {
     const localPath = req.headers["x-local-path"] || "";
     const capturedAt = req.headers["x-captured-at"] || null;
 
+    const safeCapturedAt = parseCapturedAt(capturedAt);
+
     const fallbackName = `photo_${Date.now()}.jpg`;
     const fileName =
       cleanPath(localPath).split("/").filter(Boolean).pop() || fallbackName;
 
-    const dateFolder = new Date().toISOString().slice(0, 10);
+    const dateFolder =
+      safeCapturedAt
+        ? safeCapturedAt.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
 
     const storagePath = cleanPath(
       `${deviceId}/${dateFolder}/${fileName}`
@@ -78,14 +101,7 @@ module.exports = async function handler(req, res) {
       storage_path: storagePath,
       file_size: body.length,
       upload_status: "uploaded",
-      let safeCapturedAt = null;
-
-if (capturedAt && !capturedAt.startsWith("teste_") && !capturedAt.startsWith("sem_hora")) {
-  const parsedDate = new Date(capturedAt.replace(" ", "T"));
-  if (!isNaN(parsedDate.getTime())) {
-    safeCapturedAt = parsedDate.toISOString();
-  }
-}
+      captured_at: safeCapturedAt
     };
 
     const dbResponse = await fetch(
@@ -118,6 +134,7 @@ if (capturedAt && !capturedAt.startsWith("teste_") && !capturedAt.startsWith("se
       uploaded: true,
       storage_path: storagePath,
       file_size: body.length,
+      captured_at: safeCapturedAt,
       result: JSON.parse(dbText)
     });
 
