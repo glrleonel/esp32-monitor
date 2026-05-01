@@ -11,6 +11,7 @@ export default async function handler(req, res) {
       ip: data.ip || null,
       last_capture: data.last_capture || null,
       status: data.status || "ok",
+      temperatura: data.temperatura ?? null,
       error: data.error || null
     };
 
@@ -49,5 +50,7 @@ export default async function handler(req, res) {
       ok: false,
       error: error.message
     });
+  }
+}
   }
 }
