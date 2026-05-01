@@ -78,7 +78,14 @@ module.exports = async function handler(req, res) {
       storage_path: storagePath,
       file_size: body.length,
       upload_status: "uploaded",
-      captured_at: capturedAt || null
+      let safeCapturedAt = null;
+
+if (capturedAt && !capturedAt.startsWith("teste_") && !capturedAt.startsWith("sem_hora")) {
+  const parsedDate = new Date(capturedAt.replace(" ", "T"));
+  if (!isNaN(parsedDate.getTime())) {
+    safeCapturedAt = parsedDate.toISOString();
+  }
+}
     };
 
     const dbResponse = await fetch(
