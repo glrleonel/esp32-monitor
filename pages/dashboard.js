@@ -12,6 +12,16 @@ function formatDate(dateString) {
   });
 }
 
+function formatTime(dateString) {
+  if (!dateString) return "-";
+
+  return new Date(dateString).toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function todayBrazil() {
   return new Date().toLocaleDateString("en-CA", {
     timeZone: "America/Sao_Paulo",
@@ -67,15 +77,15 @@ function TemperatureChart({ history }) {
   }
 
   const width = 900;
-  const height = 280;
-  const padding = 40;
+  const height = 300;
+  const padding = 45;
 
   const series = [
-    { key: "temp_sem_linha", label: "Sem linha" },
-    { key: "temp_vermelha", label: "Vermelha" },
-    { key: "temp_rosa", label: "Rosa" },
-    { key: "temp_verde", label: "Verde" },
-    { key: "temp_preta", label: "Preta" },
+    { key: "temp_sem_linha", label: "Sem linha", color: "#111" },
+    { key: "temp_vermelha", label: "Vermelha", color: "#d00" },
+    { key: "temp_rosa", label: "Rosa", color: "#d63384" },
+    { key: "temp_verde", label: "Verde", color: "#198754" },
+    { key: "temp_preta", label: "Preta", color: "#444" },
   ];
 
   const values = history.flatMap((h) =>
@@ -88,6 +98,7 @@ function TemperatureChart({ history }) {
 
   const min = Math.floor(Math.min(...values) - 1);
   const max = Math.ceil(Math.max(...values) + 1);
+  const labelStep = Math.max(1, Math.floor(history.length / 6));
 
   function x(i) {
     return padding + (i * (width - 2 * padding)) / (history.length - 1);
@@ -117,24 +128,43 @@ function TemperatureChart({ history }) {
         <text x={8} y={padding + 5} fontSize="12">
           {max} °C
         </text>
+
         <text x={8} y={height - padding} fontSize="12">
           {min} °C
         </text>
 
-        {series.map((s, index) => (
+        {history.map((h, i) => {
+          if (i % labelStep !== 0 && i !== history.length - 1) return null;
+
+          return (
+            <text
+              key={i}
+              x={x(i)}
+              y={height - 12}
+              fontSize="11"
+              textAnchor="middle"
+            >
+              {formatTime(h.created_at)}
+            </text>
+          );
+        })}
+
+        {series.map((s) => (
           <path
             key={s.key}
             d={makePath(s.key)}
             fill="none"
             strokeWidth="2"
-            stroke={["#111", "#d00", "#d63384", "#198754", "#444"][index]}
+            stroke={s.color}
           />
         ))}
       </svg>
 
       <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 12 }}>
         {series.map((s) => (
-          <span key={s.key}>{s.label}</span>
+          <span key={s.key}>
+            <span style={{ color: s.color, fontWeight: "bold" }}>●</span> {s.label}
+          </span>
         ))}
       </div>
     </div>
@@ -224,7 +254,8 @@ export default function Dashboard() {
     }
 
     const headers = [
-      "created_at",
+      "data",
+      "hora",
       "temp_sem_linha",
       "temp_vermelha",
       "temp_rosa",
@@ -235,14 +266,35 @@ export default function Dashboard() {
       "status",
     ];
 
-    const rows = history.map((h) =>
-      headers
-        .map((key) => {
-          const value = h[key] ?? "";
-          return `"${String(value).replaceAll('"', '""')}"`;
-        })
-        .join(";")
-    );
+    const rows = history.map((h) => {
+      const dataLocal = new Date(h.created_at).toLocaleDateString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+      });
+
+      const horaLocal = new Date(h.created_at).toLocaleTimeString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+
+      const values = [
+        dataLocal,
+        horaLocal,
+        h.temp_sem_linha ?? "",
+        h.temp_vermelha ?? "",
+        h.temp_rosa ?? "",
+        h.temp_verde ?? "",
+        h.temp_preta ?? "",
+        h.cam_ok ?? "",
+        h.sd_ok ?? "",
+        h.status ?? "",
+      ];
+
+      return values
+        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+        .join(";");
+    });
 
     const csv = [headers.join(";"), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -265,6 +317,12 @@ export default function Dashboard() {
   if (!data) {
     return <h2 style={{ fontFamily: "Arial", padding: 20 }}>Carregando...</h2>;
   }
+
+  const hasActiveAlert =
+    data.status !== "ok" || !data.cam_ok || !data.sd_ok || Boolean(data.error);
+
+  const latestPhotos = photos.slice(0, 4);
+  const chartHistory = history.slice().reverse();
 
   return (
     <div style={{ padding: 20, fontFamily: "Arial", background: "#f4f6f8", minHeight: "100vh" }}>
@@ -313,6 +371,21 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      <Card title="Alertas ativos">
+        {!hasActiveAlert && <p>🟢 Nenhum alerta ativo.</p>}
+
+        {hasActiveAlert && (
+          <ul>
+            {data.status !== "ok" && <li>🔴 Sistema em falha</li>}
+            {!data.cam_ok && <li>🔴 ESP32-CAM offline</li>}
+            {!data.sd_ok && <li>🔴 Cartão SD com falha</li>}
+            {data.error && <li>⚠️ {data.error}</li>}
+          </ul>
+        )}
+      </Card>
+
+      <br />
+
       <Card title="Controle remoto">
         <Button onClick={sendCaptureCommand} color="#007bff">
           {loadingCommand ? "Enviando..." : "Capturar foto agora"}
@@ -345,7 +418,7 @@ export default function Dashboard() {
       <br />
 
       <Card title="Gráfico das temperaturas">
-        <TemperatureChart history={history.slice().reverse()} />
+        <TemperatureChart history={chartHistory} />
 
         <br />
 
@@ -356,8 +429,8 @@ export default function Dashboard() {
 
       <br />
 
-      <Card title="Fotos enviadas para a nuvem">
-        {photos.length === 0 && <p>Nenhuma foto enviada ainda.</p>}
+      <Card title="Últimas 4 fotos enviadas para a nuvem">
+        {latestPhotos.length === 0 && <p>Nenhuma foto enviada ainda.</p>}
 
         <div
           style={{
@@ -366,7 +439,7 @@ export default function Dashboard() {
             gap: 14,
           }}
         >
-          {photos.map((p) => {
+          {latestPhotos.map((p) => {
             const imageUrl = `${SUPABASE_URL}/storage/v1/object/public/esp32-photos/${p.storage_path}`;
 
             return (
@@ -406,20 +479,6 @@ export default function Dashboard() {
             );
           })}
         </div>
-      </Card>
-
-      <br />
-
-      <Card title="Alertas">
-        {alerts.length === 0 && <p>Sem alertas</p>}
-
-        <ul>
-          {alerts.slice(0, 20).map((a) => (
-            <li key={a.id}>
-              {a.message} ({a.severity}) - {formatDate(a.created_at)}
-            </li>
-          ))}
-        </ul>
       </Card>
     </div>
   );
