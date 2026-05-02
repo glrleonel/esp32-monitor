@@ -12,6 +12,13 @@ function formatDate(dateString) {
   });
 }
 
+
+new Date(dateString).toLocaleString("pt-BR", {
+  timeZone: "America/Sao_Paulo",
+  dateStyle: "short",
+  timeStyle: "medium"
+})
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [alerts, setAlerts] = useState([]);
