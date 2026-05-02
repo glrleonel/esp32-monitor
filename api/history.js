@@ -1,28 +1,23 @@
 module.exports = async function handler(req, res) {
-  try {
-    const limit = req.query.limit || 100;
 
-    const response = await fetch(
-      `${process.env.SUPABASE_URL}/rest/v1/heartbeats?order=created_at.desc&limit=${limit}`,
-      {
-        headers: {
-          "apikey": process.env.SUPABASE_SERVICE_ROLE_KEY,
-          "Authorization": `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
-        }
-      }
-    );
+  const { start, end } = req.query;
 
-    const data = await response.json();
+  let filter = "";
 
-    return res.status(200).json({
-      ok: true,
-      data
-    });
-
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      error: error.message
-    });
+  if (start && end) {
+    filter = `&created_at=gte.${start}T00:00:00&created_at=lte.${end}T23:59:59`;
   }
+
+  const url = `${process.env.SUPABASE_URL}/rest/v1/heartbeats?order=created_at.desc${filter}`;
+
+  const response = await fetch(url, {
+    headers: {
+      apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
+
+  const data = await response.json();
+
+  res.status(200).json({ ok: true, data });
 };
