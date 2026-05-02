@@ -68,9 +68,20 @@ module.exports = async function handler(req, res) {
       const arrayBuffer = await fileResponse.arrayBuffer();
 
       const originalName = photo.storage_path.split("/").pop();
-      const safeName = `${photo.id}_${originalName}`;
 
-      zip.file(safeName, Buffer.from(arrayBuffer));
+const dateSource = photo.captured_at || photo.uploaded_at;
+const localDate = new Date(dateSource);
+
+const formattedDate = localDate
+  .toLocaleString("sv-SE", {
+    timeZone: "America/Sao_Paulo",
+  })
+  .replace(" ", "_")
+  .replaceAll(":", "-");
+
+const safeName = `${formattedDate}_${photo.id}_${originalName}`;
+
+zip.file(safeName, Buffer.from(arrayBuffer));
     }
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
