@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-
+const [logged, setLogged] = useState(false);
+const [role, setRole] = useState("");
+const [user, setUser] = useState("");
+const [pass, setPass] = useState("");
 const SUPABASE_URL = "https://hkomutmuonfntowvdgjc.supabase.co";
 
 function formatDate(dateString) {
@@ -313,7 +316,49 @@ export default function Dashboard() {
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
+if (!logged) {
+  return (
+    <div style={{ padding: 40, fontFamily: "Arial" }}>
+      <h2>Login</h2>
 
+      <input
+        placeholder="Usuário"
+        value={user}
+        onChange={(e) => setUser(e.target.value)}
+        style={{ display: "block", marginBottom: 10, padding: 8 }}
+      />
+
+      <input
+        placeholder="Senha"
+        type="password"
+        value={pass}
+        onChange={(e) => setPass(e.target.value)}
+        style={{ display: "block", marginBottom: 10, padding: 8 }}
+      />
+
+      <button
+        onClick={async () => {
+          const res = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user, pass }),
+          });
+
+          const json = await res.json();
+
+          if (json.ok) {
+            setLogged(true);
+            setRole(json.role);
+          } else {
+            alert("Login inválido");
+          }
+        }}
+      >
+        Entrar
+      </button>
+    </div>
+  );
+}
   if (!data) {
     return <h2 style={{ fontFamily: "Arial", padding: 20 }}>Carregando...</h2>;
   }
