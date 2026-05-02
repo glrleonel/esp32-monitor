@@ -436,9 +436,11 @@ if (!logged) {
           {loadingCommand ? "Enviando..." : "Capturar foto agora"}
         </Button>
 
-        <Button onClick={sendClearSDCommand} color="#dc3545">
-          Limpar SD do ESP32-CAM
-        </Button>
+{role === "admin" && (
+  <Button onClick={sendClearSDCommand} color="#dc3545">
+    Limpar SD do ESP32-CAM
+  </Button>
+)}
 
         <Button onClick={loadData} color="#198754">
           Atualizar agora
