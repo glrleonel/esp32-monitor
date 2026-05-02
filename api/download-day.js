@@ -1,5 +1,15 @@
 const JSZip = require("jszip");
 
+function getBrazilDayRange(date) {
+  const start = new Date(`${date}T00:00:00-03:00`);
+  const end = new Date(`${date}T23:59:59.999-03:00`);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString()
+  };
+}
+
 module.exports = async function handler(req, res) {
   try {
     const { date } = req.query;
@@ -11,8 +21,10 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    const { start, end } = getBrazilDayRange(date);
+
     const photosResponse = await fetch(
-      `${process.env.SUPABASE_URL}/rest/v1/photo_uploads?storage_path=like.*${date}*&order=uploaded_at.asc`,
+      `${process.env.SUPABASE_URL}/rest/v1/photo_uploads?uploaded_at=gte.${start}&uploaded_at=lte.${end}&order=uploaded_at.asc`,
       {
         headers: {
           "apikey": process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -26,7 +38,10 @@ module.exports = async function handler(req, res) {
     if (!photos || photos.length === 0) {
       return res.status(404).json({
         ok: false,
-        error: "no_photos_found"
+        error: "no_photos_found",
+        date,
+        start,
+        end
       });
     }
 
@@ -51,9 +66,11 @@ module.exports = async function handler(req, res) {
       if (!fileResponse.ok) continue;
 
       const arrayBuffer = await fileResponse.arrayBuffer();
-      const fileName = photo.storage_path.split("/").pop();
 
-      zip.file(fileName, Buffer.from(arrayBuffer));
+      const originalName = photo.storage_path.split("/").pop();
+      const safeName = `${photo.id}_${originalName}`;
+
+      zip.file(safeName, Buffer.from(arrayBuffer));
     }
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
