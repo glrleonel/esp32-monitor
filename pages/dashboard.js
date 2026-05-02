@@ -12,49 +12,17 @@ function formatDate(dateString) {
   });
 }
 
-<h2>Captura Manual</h2>
-
-<button
-  onClick={async () => {
-    const res = await fetch("/api/create-command", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        command_type: "capture_now"
-      })
-    });
-
-    const json = await res.json();
-
-    if (json.ok) {
-      alert("Comando de captura enviado!");
-    } else {
-      alert("Erro ao enviar comando");
-    }
-  }}
-  style={{
-    padding: 10,
-    background: "#007bff",
-    color: "white",
-    border: "none",
-    borderRadius: 8
-  }}
->
-  Capturar foto agora
-</button>
-
-new Date(dateString).toLocaleString("pt-BR", {
-  timeZone: "America/Sao_Paulo",
-  dateStyle: "short",
-  timeStyle: "medium"
-})
+function todayBrazil() {
+  return new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+}
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(todayBrazil());
 
   async function loadData() {
     const res = await fetch("/api/latest");
@@ -68,6 +36,27 @@ export default function Dashboard() {
     const photoRes = await fetch("/api/photos");
     const photoJson = await photoRes.json();
     setPhotos(photoJson.data || []);
+  }
+
+  async function sendCaptureCommand() {
+    const res = await fetch("/api/create-command", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        command_type: "capture_now",
+      }),
+    });
+
+    const json = await res.json();
+
+    if (json.ok) alert("Comando de captura enviado!");
+    else alert("Erro ao enviar comando.");
+  }
+
+  function downloadDayZip() {
+    window.open(`/api/download-day?date=${selectedDate}`, "_blank");
   }
 
   useEffect(() => {
@@ -104,6 +93,46 @@ export default function Dashboard() {
       <h2>Última Foto no CAM</h2>
       <p>{data.cam_last_photo || "Nenhuma foto registrada"}</p>
 
+      <h2>Controle remoto</h2>
+
+      <button
+        onClick={sendCaptureCommand}
+        style={{
+          padding: "10px 14px",
+          background: "#007bff",
+          color: "white",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          marginRight: 10,
+        }}
+      >
+        Capturar foto agora
+      </button>
+
+      <h2>Baixar fotos por dia</h2>
+
+      <input
+        type="date"
+        value={selectedDate}
+        onChange={(e) => setSelectedDate(e.target.value)}
+        style={{ padding: 8, marginRight: 10 }}
+      />
+
+      <button
+        onClick={downloadDayZip}
+        style={{
+          padding: "10px 14px",
+          background: "#222",
+          color: "white",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+        }}
+      >
+        Baixar ZIP do dia
+      </button>
+
       <h2>Fotos enviadas para a nuvem</h2>
 
       {photos.length === 0 && <p>Nenhuma foto enviada ainda.</p>}
@@ -119,7 +148,7 @@ export default function Dashboard() {
               borderRadius: 8,
               padding: 10,
               marginBottom: 12,
-              maxWidth: 500,
+              maxWidth: 600,
             }}
           >
             <p>
@@ -138,6 +167,7 @@ export default function Dashboard() {
       })}
 
       <h2>Alertas</h2>
+
       {alerts.length === 0 && <p>Sem alertas</p>}
 
       <ul>
