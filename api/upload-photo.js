@@ -14,6 +14,7 @@ function cleanPath(value) {
     .replace(/[^a-zA-Z0-9_\-./]/g, "_");
 }
 
+// 🔥 CORRIGIDO: respeita fuso do Brasil
 function parseCapturedAt(capturedAt) {
   if (!capturedAt) return null;
 
@@ -23,7 +24,8 @@ function parseCapturedAt(capturedAt) {
     return null;
   }
 
-  const parsedDate = new Date(value.replace(" ", "T"));
+  // Interpreta como horário de Brasília (-03:00)
+  const parsedDate = new Date(value.replace(" ", "T") + "-03:00");
 
   if (isNaN(parsedDate.getTime())) {
     return null;
@@ -47,7 +49,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const deviceId = req.headers["x-device-id"] || "esp32_cam_ufsj_01";
+    const deviceId = req.headers["x-device-id"] || "esp32cam_ufsj_01";
     const localPath = req.headers["x-local-path"] || "";
     const capturedAt = req.headers["x-captured-at"] || null;
 
@@ -57,9 +59,10 @@ module.exports = async function handler(req, res) {
     const fileName =
       cleanPath(localPath).split("/").filter(Boolean).pop() || fallbackName;
 
+    // 🔥 CORRIGIDO: usa data REAL da captura (não UTC)
     const dateFolder =
-      safeCapturedAt
-        ? safeCapturedAt.slice(0, 10)
+      capturedAt && !capturedAt.startsWith("teste_") && !capturedAt.startsWith("sem_hora")
+        ? String(capturedAt).slice(0, 10)
         : new Date().toISOString().slice(0, 10);
 
     const storagePath = cleanPath(
@@ -71,6 +74,7 @@ module.exports = async function handler(req, res) {
       .map(encodeURIComponent)
       .join("/");
 
+    // 📸 Upload para o Supabase Storage
     const uploadResponse = await fetch(
       `${process.env.SUPABASE_URL}/storage/v1/object/esp32-photos/${encodedPath}`,
       {
@@ -95,6 +99,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // 🗄️ Salvar no banco
     const insertPayload = {
       device_id: deviceId,
       local_path: localPath || null,
