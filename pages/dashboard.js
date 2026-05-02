@@ -1,3 +1,4 @@
+"use client";
 import { useEffect, useState } from "react";
 const [logged, setLogged] = useState(false);
 const [role, setRole] = useState("");
