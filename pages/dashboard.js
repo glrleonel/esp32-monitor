@@ -12,6 +12,38 @@ function formatDate(dateString) {
   });
 }
 
+<h2>Captura Manual</h2>
+
+<button
+  onClick={async () => {
+    const res = await fetch("/api/create-command", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        command_type: "capture_now"
+      })
+    });
+
+    const json = await res.json();
+
+    if (json.ok) {
+      alert("Comando de captura enviado!");
+    } else {
+      alert("Erro ao enviar comando");
+    }
+  }}
+  style={{
+    padding: 10,
+    background: "#007bff",
+    color: "white",
+    border: "none",
+    borderRadius: 8
+  }}
+>
+  Capturar foto agora
+</button>
 
 new Date(dateString).toLocaleString("pt-BR", {
   timeZone: "America/Sao_Paulo",
