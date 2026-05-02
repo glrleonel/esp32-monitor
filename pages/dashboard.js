@@ -22,6 +22,17 @@ function formatTime(dateString) {
   });
 }
 
+function timeAgo(dateString) {
+  if (!dateString) return "-";
+
+  const diff = Math.floor((Date.now() - new Date(dateString)) / 1000);
+
+  if (diff < 60) return `${diff}s atrás`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} min atrás`;
+
+  return `${Math.floor(diff / 3600)} h atrás`;
+}
+
 function todayBrazil() {
   return new Date().toLocaleDateString("en-CA", {
     timeZone: "America/Sao_Paulo",
@@ -71,100 +82,6 @@ function Button({ children, onClick, color = "#007bff" }) {
   );
 }
 
-function TemperatureChart({ history }) {
-  if (!history || history.length < 2) {
-    return <p>Dados insuficientes para gerar gráfico.</p>;
-  }
-
-  const width = 900;
-  const height = 300;
-  const padding = 45;
-
-  const series = [
-    { key: "temp_sem_linha", label: "Sem linha", color: "#111" },
-    { key: "temp_vermelha", label: "Vermelha", color: "#d00" },
-    { key: "temp_rosa", label: "Rosa", color: "#d63384" },
-    { key: "temp_verde", label: "Verde", color: "#198754" },
-    { key: "temp_preta", label: "Preta", color: "#444" },
-  ];
-
-  const values = history.flatMap((h) =>
-    series
-      .map((s) => Number(h[s.key]))
-      .filter((v) => !Number.isNaN(v) && v > -50 && v < 125)
-  );
-
-  if (values.length === 0) return <p>Sem temperaturas válidas.</p>;
-
-  const min = Math.floor(Math.min(...values) - 1);
-  const max = Math.ceil(Math.max(...values) + 1);
-  const labelStep = Math.max(1, Math.floor(history.length / 6));
-
-  function x(i) {
-    return padding + (i * (width - 2 * padding)) / (history.length - 1);
-  }
-
-  function y(value) {
-    return height - padding - ((value - min) * (height - 2 * padding)) / (max - min);
-  }
-
-  function makePath(key) {
-    return history
-      .map((h, i) => {
-        const value = Number(h[key]);
-        if (Number.isNaN(value)) return null;
-        return `${i === 0 ? "M" : "L"} ${x(i)} ${y(value)}`;
-      })
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <svg width={width} height={height} style={{ background: "#fafafa", borderRadius: 10 }}>
-        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#ccc" />
-        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#ccc" />
-
-        <text x={8} y={padding + 5} fontSize="12">
-          {max} °C
-        </text>
-
-        <text x={8} y={height - padding} fontSize="12">
-          {min} °C
-        </text>
-
-        {history.map((h, i) => {
-          if (i % labelStep !== 0 && i !== history.length - 1) return null;
-
-          return (
-            <text key={i} x={x(i)} y={height - 12} fontSize="11" textAnchor="middle">
-              {formatTime(h.created_at)}
-            </text>
-          );
-        })}
-
-        {series.map((s) => (
-          <path
-            key={s.key}
-            d={makePath(s.key)}
-            fill="none"
-            strokeWidth="2"
-            stroke={s.color}
-          />
-        ))}
-      </svg>
-
-      <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 12 }}>
-        {series.map((s) => (
-          <span key={s.key}>
-            <span style={{ color: s.color, fontWeight: "bold" }}>●</span> {s.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [photos, setPhotos] = useState([]);
@@ -190,7 +107,7 @@ export default function Dashboard() {
     }
   }
 
-  async function createCommand(commandType, successMessage) {
+  async function createCommand(commandType, msg) {
     try {
       setLoadingCommand(true);
 
@@ -199,275 +116,107 @@ export default function Dashboard() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          command_type: commandType,
-        }),
+        body: JSON.stringify({ command_type: commandType }),
       });
 
       const json = await res.json();
 
-      if (json.ok) {
-        alert(successMessage);
-      } else {
-        alert("Erro ao enviar comando.");
-      }
-    } catch (err) {
-      alert("Falha de comunicação com a API.");
+      if (json.ok) alert(msg);
+      else alert("Erro ao enviar comando.");
+    } catch {
+      alert("Falha na API.");
     } finally {
       setLoadingCommand(false);
     }
   }
 
-  function sendCaptureCommand() {
-    createCommand("capture_now", "Comando de captura enviado!");
-  }
-
-  function sendClearSDCommand() {
-    const ok = confirm(
-      "Tem certeza que deseja limpar as fotos do SD do ESP32-CAM? Faça isso somente depois de confirmar que as fotos foram enviadas para a nuvem."
-    );
-
-    if (!ok) return;
-
-    createCommand("clear_uploaded_photos", "Comando para limpar SD enviado!");
-  }
+  // ===== NOVOS COMANDOS =====
+  const sendCapture = () => createCommand("capture_now", "Captura enviada!");
+  const sendClear = () => createCommand("clear_uploaded_photos", "Limpeza enviada!");
+  const sendTemps = () => createCommand("read_temps_now", "Leitura solicitada!");
+  const sendRestartESP = () => createCommand("restart_normal", "Reiniciando ESP32...");
+  const sendRestartCAM = () => createCommand("restart_cam", "Reiniciando CAM...");
 
   function downloadDayZip() {
     window.open(`/api/download-day?date=${selectedDate}`, "_blank");
   }
 
   function exportCSV() {
-    if (!history.length) {
-      alert("Sem histórico para exportar.");
-      return;
-    }
+    if (!history.length) return alert("Sem dados.");
 
-    const headers = [
-      "data",
-      "hora",
-      "temp_sem_linha",
-      "temp_vermelha",
-      "temp_rosa",
-      "temp_verde",
-      "temp_preta",
-      "cam_ok",
-      "sd_ok",
-      "status",
-    ];
+    const csv = history.map(h =>
+      `${formatDate(h.created_at)};${h.temp_sem_linha};${h.temp_vermelha};${h.temp_rosa};${h.temp_verde};${h.temp_preta}`
+    ).join("\n");
 
-    const rows = history.map((h) => {
-      const dataLocal = new Date(h.created_at).toLocaleDateString("pt-BR", {
-        timeZone: "America/Sao_Paulo",
-      });
-
-      const horaLocal = new Date(h.created_at).toLocaleTimeString("pt-BR", {
-        timeZone: "America/Sao_Paulo",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-
-      const values = [
-        dataLocal,
-        horaLocal,
-        h.temp_sem_linha ?? "",
-        h.temp_vermelha ?? "",
-        h.temp_rosa ?? "",
-        h.temp_verde ?? "",
-        h.temp_preta ?? "",
-        h.cam_ok ?? "",
-        h.sd_ok ?? "",
-        h.status ?? "",
-      ];
-
-      return values
-        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
-        .join(";");
-    });
-
-    const csv = [headers.join(";"), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `temperaturas_${todayBrazil()}.csv`;
+    a.download = "dados.csv";
     a.click();
-
-    URL.revokeObjectURL(url);
   }
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    const i = setInterval(loadData, 5000);
+    return () => clearInterval(i);
   }, []);
 
-  if (!data) {
-    return <h2 style={{ fontFamily: "Arial", padding: 20 }}>Carregando...</h2>;
-  }
+  if (!data) return <h2 style={{ padding: 20 }}>Carregando...</h2>;
 
-  const hasActiveAlert =
-    data.status !== "ok" || !data.cam_ok || !data.sd_ok || Boolean(data.error);
-
-  const latestPhotos = photos.slice(0, 4);
-  const chartHistory = history.slice().reverse();
+  const systemOk = data.status === "ok" && data.cam_ok && data.sd_ok;
 
   return (
     <div style={{ padding: 20, fontFamily: "Arial", background: "#f4f6f8", minHeight: "100vh" }}>
       <h1>Monitoramento Fotovoltaico</h1>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
-        <Card title="Status geral">
-          <h2>{data.status === "ok" ? "🟢 OK" : "🔴 FALHA"}</h2>
-          <p>
-            <b>Última leitura:</b> {formatDate(data.created_at)}
-          </p>
-          <p>
-            <b>Última captura:</b> {formatDate(data.last_capture)}
-          </p>
-          <p>
-            <b>Erro:</b> {data.error || "-"}
-          </p>
-        </Card>
+      <Card title="Status geral">
+        <h2 style={{ color: systemOk ? "#22c55e" : "#ef4444" }}>
+          ● {systemOk ? "Operacional" : "Falha"}
+        </h2>
 
-        <Card title="Temperaturas">
-          <p>Sem linha: {temp(data.temp_sem_linha)} °C</p>
-          <p>Vermelha: {temp(data.temp_vermelha)} °C</p>
-          <p>Rosa: {temp(data.temp_rosa)} °C</p>
-          <p>Verde: {temp(data.temp_verde)} °C</p>
-          <p>Preta: {temp(data.temp_preta)} °C</p>
-        </Card>
+        <p><b>Última leitura:</b> {formatDate(data.created_at)}</p>
+        <p><b>Atualizado:</b> {timeAgo(data.created_at)}</p>
+        <p><b>Erro:</b> {data.error || "-"}</p>
+      </Card>
 
-        <Card title="ESP32-CAM">
-          <p>CAM: {data.cam_ok ? "🟢 OK" : "🔴 OFF"}</p>
-          <p>SD: {data.sd_ok ? "🟢 OK" : "🔴 FALHA"}</p>
-          <p>
-            <b>Última foto no CAM:</b>
-            <br />
-            {data.cam_last_photo || "Nenhuma foto registrada"}
-          </p>
-          <p>
-            <b>Timestamp CAM:</b> {data.cam_timestamp || "-"}
-          </p>
-        </Card>
-      </div>
+      <br />
 
-      <Card title="Alertas ativos">
-        {!hasActiveAlert && <p>🟢 Nenhum alerta ativo.</p>}
-
-        {hasActiveAlert && (
-          <ul>
-            {data.status !== "ok" && <li>🔴 Sistema em falha</li>}
-            {!data.cam_ok && <li>🔴 ESP32-CAM offline</li>}
-            {!data.sd_ok && <li>🔴 Cartão SD com falha</li>}
-            {data.error && <li>⚠️ {data.error}</li>}
-          </ul>
-        )}
+      <Card title="Temperaturas">
+        <p>Sem linha: {temp(data.temp_sem_linha)} °C</p>
+        <p>Vermelha: {temp(data.temp_vermelha)} °C</p>
+        <p>Rosa: {temp(data.temp_rosa)} °C</p>
+        <p>Verde: {temp(data.temp_verde)} °C</p>
+        <p>Preta: {temp(data.temp_preta)} °C</p>
       </Card>
 
       <br />
 
       <Card title="Controle remoto">
-        <Button onClick={sendCaptureCommand} color="#007bff">
-          {loadingCommand ? "Enviando..." : "Capturar foto agora"}
+        <Button onClick={sendCapture}>Capturar foto</Button>
+        <Button onClick={sendClear} color="#dc3545">Limpar SD</Button>
+
+        <Button onClick={sendTemps} color="#6f42c1">
+          Atualizar temperaturas
         </Button>
 
-        <Button onClick={sendClearSDCommand} color="#dc3545">
-          Limpar SD do ESP32-CAM
+        <Button onClick={sendRestartESP} color="#343a40">
+          Reiniciar ESP32
         </Button>
 
-        <Button onClick={loadData} color="#198754">
-          Atualizar agora
-        </Button>
-      </Card>
-
-      <br />
-
-      <Card title="Baixar fotos por dia">
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          style={{ padding: 8, marginRight: 10 }}
-        />
-
-        <Button onClick={downloadDayZip} color="#222">
-          Baixar ZIP do dia
+        <Button onClick={sendRestartCAM} color="#6610f2">
+          Reiniciar CAM
         </Button>
       </Card>
 
       <br />
 
-      <Card title="Gráfico das temperaturas">
-        <TemperatureChart history={chartHistory} />
-
-        <br />
-
-        <Button onClick={exportCSV} color="#6f42c1">
-          Exportar CSV
-        </Button>
-      </Card>
-
-      <br />
-
-      <Card title="Últimas 4 fotos enviadas para a nuvem">
-        {latestPhotos.length === 0 && <p>Nenhuma foto enviada ainda.</p>}
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: 14,
-          }}
-        >
-          {latestPhotos.map((p) => {
-            const imageUrl = `${SUPABASE_URL}/storage/v1/object/public/esp32-photos/${p.storage_path}`;
-
-            return (
-              <div
-                key={p.id}
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 10,
-                  padding: 10,
-                  background: "#fafafa",
-                }}
-              >
-                <img
-                  src={imageUrl}
-                  alt="Foto do experimento"
-                  style={{
-                    width: "100%",
-                    maxHeight: 180,
-                    objectFit: "cover",
-                    borderRadius: 8,
-                    marginBottom: 8,
-                  }}
-                />
-
-                <p style={{ wordBreak: "break-all" }}>
-                  <b>Arquivo:</b> {p.storage_path}
-                </p>
-
-                <p>
-                  <b>Enviado em:</b> {formatDate(p.uploaded_at)}
-                </p>
-
-                <a href={imageUrl} target="_blank" rel="noreferrer">
-                  Abrir imagem
-                </a>
-              </div>
-            );
-          })}
-        </div>
+      <Card title="Exportação">
+        <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+        <br /><br />
+        <Button onClick={downloadDayZip}>Baixar fotos</Button>
+        <Button onClick={exportCSV} color="#6f42c1">Exportar CSV</Button>
       </Card>
     </div>
   );
