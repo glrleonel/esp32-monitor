@@ -20,10 +20,27 @@ const theme = {
   error: "#ef4444",
 };
 
+const sensorColors = {
+  temp_sem_linha: "#a78bfa",
+  temp_vermelha: "#ef4444",
+  temp_rosa: "#ec4899",
+  temp_verde: "#22c55e",
+  temp_preta: "#e5e7eb",
+};
+
 function formatDate(dateString) {
   if (!dateString) return "-";
   return new Date(dateString).toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo",
+  });
+}
+
+function formatTime(dateString) {
+  if (!dateString) return "-";
+  return new Date(dateString).toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -159,6 +176,147 @@ function StatusDot({ ok, labelOk = "OK", labelFail = "Falha" }) {
   );
 }
 
+function TemperatureChart({ rows }) {
+  const data = [...rows].reverse();
+
+  if (!data.length) {
+    return <p style={{ color: theme.muted }}>Sem dados para o dia selecionado.</p>;
+  }
+
+  const width = 950;
+  const height = 340;
+  const padding = 52;
+
+  const series = [
+    { key: "temp_sem_linha", label: "Sem linha", color: sensorColors.temp_sem_linha },
+    { key: "temp_vermelha", label: "Vermelha", color: sensorColors.temp_vermelha },
+    { key: "temp_rosa", label: "Rosa", color: sensorColors.temp_rosa },
+    { key: "temp_verde", label: "Verde", color: sensorColors.temp_verde },
+    { key: "temp_preta", label: "Preta", color: sensorColors.temp_preta },
+  ];
+
+  const values = data.flatMap((r) =>
+    series
+      .map((s) => Number(r[s.key]))
+      .filter((v) => !Number.isNaN(v) && v > -50 && v < 125)
+  );
+
+  if (!values.length) {
+    return <p style={{ color: theme.muted }}>Sem temperaturas válidas para o dia selecionado.</p>;
+  }
+
+  const min = Math.floor(Math.min(...values) - 1);
+  const max = Math.ceil(Math.max(...values) + 1);
+  const range = Math.max(1, max - min);
+
+  function x(i) {
+    if (data.length === 1) return width / 2;
+    return padding + (i * (width - 2 * padding)) / (data.length - 1);
+  }
+
+  function y(value) {
+    return height - padding - ((value - min) * (height - 2 * padding)) / range;
+  }
+
+  function makePath(key) {
+    return data
+      .map((r, i) => {
+        const value = Number(r[key]);
+        if (Number.isNaN(value)) return null;
+        return `${i === 0 ? "M" : "L"} ${x(i)} ${y(value)}`;
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  const labelStep = Math.max(1, Math.floor(data.length / 7));
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg
+        width={width}
+        height={height}
+        style={{
+          background: "linear-gradient(180deg, #111122, #0b0b14)",
+          border: `1px solid ${theme.border}`,
+          borderRadius: 16,
+          boxShadow: "inset 0 0 35px rgba(124,58,237,0.12)",
+        }}
+      >
+        {[0, 0.25, 0.5, 0.75, 1].map((p) => {
+          const yy = padding + p * (height - 2 * padding);
+          return (
+            <line
+              key={p}
+              x1={padding}
+              y1={yy}
+              x2={width - padding}
+              y2={yy}
+              stroke="#2a2148"
+            />
+          );
+        })}
+
+        <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="#4b3b78" />
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#4b3b78" />
+
+        <text x={12} y={padding + 5} fontSize="12" fill={theme.muted}>
+          {max} °C
+        </text>
+
+        <text x={12} y={height - padding} fontSize="12" fill={theme.muted}>
+          {min} °C
+        </text>
+
+        {data.map((r, i) => {
+          if (i % labelStep !== 0 && i !== data.length - 1) return null;
+
+          return (
+            <text
+              key={i}
+              x={x(i)}
+              y={height - 16}
+              fontSize="11"
+              textAnchor="middle"
+              fill={theme.muted}
+            >
+              {formatTime(r.created_at)}
+            </text>
+          );
+        })}
+
+        {series.map((s) => (
+          <path
+            key={s.key}
+            d={makePath(s.key)}
+            fill="none"
+            stroke={s.color}
+            strokeWidth="2.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 14,
+          marginTop: 12,
+          color: theme.text,
+        }}
+      >
+        {series.map((s) => (
+          <span key={s.key} style={{ fontSize: 13 }}>
+            <span style={{ color: s.color, fontWeight: 900 }}>●</span> {s.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildCSV(rows) {
   const headers = [
     "data",
@@ -218,13 +376,14 @@ export default function Dashboard() {
   const [startDate, setStartDate] = useState(todayBrazil());
   const [endDate, setEndDate] = useState(todayBrazil());
   const [selectedDate, setSelectedDate] = useState(todayBrazil());
+  const [chartDate, setChartDate] = useState(todayBrazil());
 
   async function loadData() {
     try {
       const d = await fetch("/api/latest").then((r) => r.json());
       setData(d.data);
 
-      const h = await fetch("/api/history").then((r) => r.json());
+      const h = await fetch(`/api/history?start=${chartDate}&end=${chartDate}&limit=5000`).then((r) => r.json());
       setHistory(h.data || []);
 
       const p = await fetch("/api/photos").then((r) => r.json());
@@ -238,7 +397,7 @@ export default function Dashboard() {
     loadData();
     const i = setInterval(loadData, 5000);
     return () => clearInterval(i);
-  }, []);
+  }, [chartDate]);
 
   async function createCommand(type, message) {
     try {
@@ -420,6 +579,16 @@ export default function Dashboard() {
           </p>
         </Card>
       </div>
+
+      <Card title="Gráfico das temperaturas" subtitle="Selecione um dia específico para visualizar as leituras">
+        <div style={{ marginBottom: 12 }}>
+          <DateInput value={chartDate} onChange={(e) => setChartDate(e.target.value)} />
+        </div>
+
+        <TemperatureChart rows={history} />
+      </Card>
+
+      <br />
 
       <Card title="Controle remoto" subtitle="Comandos enviados para execução pelo ESP32 principal">
         <Button
