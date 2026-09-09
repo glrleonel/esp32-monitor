@@ -12,12 +12,24 @@ module.exports = async function handler(req, res) {
       last_capture: data.last_capture || null,
       status: data.status || "ok",
 
+      // Campos legados mantidos para compatibilidade com o histórico antigo.
       temperatura: data.temperatura ?? null,
       temp_sem_linha: data.temp_sem_linha ?? null,
       temp_vermelha: data.temp_vermelha ?? null,
       temp_rosa: data.temp_rosa ?? null,
       temp_verde: data.temp_verde ?? null,
       temp_preta: data.temp_preta ?? null,
+
+      // Nova identificação fixa dos 9 sensores DS18B20.
+      temp_sensor1: data.temp_sensor1 ?? null,
+      temp_sensor2: data.temp_sensor2 ?? null,
+      temp_sensor3: data.temp_sensor3 ?? null,
+      temp_sensor4: data.temp_sensor4 ?? null,
+      temp_sensor5: data.temp_sensor5 ?? null,
+      temp_sensor6: data.temp_sensor6 ?? null,
+      temp_sensor7: data.temp_sensor7 ?? null,
+      temp_sensor8: data.temp_sensor8 ?? null,
+      temp_sensor9: data.temp_sensor9 ?? null,
 
       cam_ok: data.cam_ok ?? null,
       sd_ok: data.sd_ok ?? null,
@@ -27,7 +39,7 @@ module.exports = async function handler(req, res) {
       error: data.error || null
     };
 
-    // 🔹 1. SALVAR HEARTBEAT
+    // 1. SALVAR HEARTBEAT
     const hbResponse = await fetch(
       `${process.env.SUPABASE_URL}/rest/v1/heartbeats`,
       {
@@ -52,9 +64,10 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const hbData = JSON.parse(hbText)[0];
+    const hbRows = JSON.parse(hbText);
+    const hbData = hbRows[0];
 
-    // 🔹 2. ATUALIZAR DEVICE
+    // 2. ATUALIZAR DEVICE
     await fetch(
       `${process.env.SUPABASE_URL}/rest/v1/devices?device_id=eq.${data.device_id}`,
       {
@@ -72,8 +85,8 @@ module.exports = async function handler(req, res) {
       }
     );
 
-    // 🔹 3. ALERTAS AUTOMÁTICOS
-    let alerts = [];
+    // 3. ALERTAS AUTOMÁTICOS
+    const alerts = [];
 
     if (data.status === "falha") {
       alerts.push({
@@ -105,22 +118,10 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // 🔥 DETECÇÃO DE HOTSPOT
-    if (data.temp_rosa && data.temperatura) {
-      const diff = data.temp_rosa - data.temperatura;
+    // A antiga detecção de hotspot comparava temp_rosa com temperatura.
+    // Ela foi desativada temporariamente porque os sensores agora são
+    // identificados como Sensor 1...Sensor 9 e ainda serão mapeados fisicamente.
 
-      if (diff > 10) {
-        alerts.push({
-          device_id: data.device_id,
-          alert_type: "temperature",
-          severity: "high",
-          message: `Possível hotspot detectado (+${diff.toFixed(1)}°C)`,
-          heartbeat_id: hbData.id
-        });
-      }
-    }
-
-    // 🔹 INSERE ALERTAS
     if (alerts.length > 0) {
       await fetch(`${process.env.SUPABASE_URL}/rest/v1/alerts`, {
         method: "POST",
@@ -133,7 +134,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // 🔹 4. REGISTRAR FOTO
+    // 4. REGISTRAR FOTO
     if (data.cam_last_photo) {
       await fetch(`${process.env.SUPABASE_URL}/rest/v1/photos`, {
         method: "POST",
