@@ -138,16 +138,17 @@ function analyzeSensor(rows, key) {
   };
 }
 
-function Card({ title, subtitle, children }) {
+function Card({ title, subtitle, children, style = {}, contentStyle = {} }) {
   return (
     <section style={{
       background: "linear-gradient(180deg," + theme.card + "," + theme.card2 + ")",
       border: "1px solid " + theme.border, borderRadius: 18, padding: 20,
-      boxShadow: "0 18px 45px rgba(0,0,0,.35)"
+      boxShadow: "0 18px 45px rgba(0,0,0,.35)", boxSizing: "border-box",
+      ...style
     }}>
       <h2 style={{ margin: 0, color: theme.text, fontSize: 20 }}>{title}</h2>
       {subtitle && <p style={{ marginTop: 6, color: theme.muted, fontSize: 13 }}>{subtitle}</p>}
-      <div style={{ marginTop: 14 }}>{children}</div>
+      <div style={{ marginTop: 14, ...contentStyle }}>{children}</div>
     </section>
   );
 }
@@ -502,6 +503,49 @@ export default function Dashboard() {
     background: "radial-gradient(circle at top left,rgba(124,58,237,.35),transparent 35%)," + theme.bg,
     color: theme.text, padding: 24, fontFamily: "Arial"
   }}>
+    <style>{`
+      .monitor-top-grid {
+        display: grid;
+        grid-template-columns: minmax(300px, 0.82fr) minmax(680px, 2.18fr);
+        gap: 16px;
+        align-items: stretch;
+      }
+      .monitor-status-column {
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        gap: 16px;
+        min-width: 0;
+      }
+      .sensor-grid-3x3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        height: 100%;
+        min-height: 470px;
+      }
+      @media (max-width: 1050px) {
+        .monitor-top-grid {
+          grid-template-columns: 1fr;
+        }
+        .monitor-status-column {
+          grid-template-columns: 1fr 1fr;
+          grid-template-rows: auto;
+        }
+        .sensor-grid-3x3 {
+          min-height: 0;
+        }
+      }
+      @media (max-width: 700px) {
+        .monitor-status-column {
+          grid-template-columns: 1fr;
+        }
+        .sensor-grid-3x3 {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto;
+        }
+      }
+    `}</style>
     <header style={{
       background: "linear-gradient(135deg,rgba(124,58,237,.32),rgba(17,17,34,.95))",
       border: "1px solid " + theme.border, borderRadius: 22, padding: 24, marginBottom: 20
@@ -514,9 +558,13 @@ export default function Dashboard() {
       <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
     </header>
 
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
-      <div style={{ flex: "1 1 310px", minWidth: 280, display: "flex", flexDirection: "column", gap: 16 }}>
-        <Card title="Status geral" subtitle="Último estado recebido do ESP32 principal">
+    <div className="monitor-top-grid" style={{ marginBottom: 16 }}>
+      <div className="monitor-status-column">
+        <Card
+          title="Status geral"
+          subtitle="Último estado recebido do ESP32 principal"
+          style={{ height: "100%" }}
+        >
           <p style={{ color: systemOk ? theme.ok : theme.warning, fontWeight: 800 }}>{systemOk ? "● Operacional" : "● Parcial / Atenção"}</p>
           <p><b>Última leitura:</b> {formatDate(data.created_at)}</p>
           <p><b>Atualizado:</b> {timeAgo(data.created_at)}</p>
@@ -524,7 +572,11 @@ export default function Dashboard() {
           <p><b>Erro:</b> {data.error || "-"}</p>
         </Card>
 
-        <Card title="ESP32-CAM" subtitle="Status repassado pelo ESP32 principal">
+        <Card
+          title="ESP32-CAM"
+          subtitle="Status repassado pelo ESP32 principal"
+          style={{ height: "100%" }}
+        >
           <p><b>CAM:</b> <StatusDot ok={Boolean(data.cam_ok)} labelOk="Online" labelFail="Offline" /></p>
           <p><b>SD:</b> <StatusDot ok={Boolean(data.sd_ok)} labelOk="OK" labelFail="Falha" /></p>
           <p><b>Última foto no CAM:</b><br /><span style={{ color: theme.muted, wordBreak: "break-all" }}>{data.cam_last_photo || "Nenhuma foto registrada"}</span></p>
@@ -532,20 +584,23 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div style={{ flex: "2.4 1 650px", minWidth: 0 }}>
-        <Card title="Temperaturas" subtitle="Clique nos sensores para incluí-los ou removê-los da análise">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
-            {sensorSeries.map((sensor) => <SensorBox
-              key={sensor.key}
-              sensor={sensor}
-              latestValue={data[sensor.key]}
-              analysis={todayAnalyses[sensor.key]}
-              selected={selectedSensors.includes(sensor.key)}
-              onClick={() => toggleSensor(sensor.key)}
-            />)}
-          </div>
-        </Card>
-      </div>
+      <Card
+        title="Temperaturas"
+        subtitle="Clique nos sensores para incluí-los ou removê-los da análise"
+        style={{ height: "100%" }}
+        contentStyle={{ height: "calc(100% - 8px)" }}
+      >
+        <div className="sensor-grid-3x3">
+          {sensorSeries.map((sensor) => <SensorBox
+            key={sensor.key}
+            sensor={sensor}
+            latestValue={data[sensor.key]}
+            analysis={todayAnalyses[sensor.key]}
+            selected={selectedSensors.includes(sensor.key)}
+            onClick={() => toggleSensor(sensor.key)}
+          />)}
+        </div>
+      </Card>
     </div>
 
     <Card title="Análise dos sensores" subtitle={viewMode === "raw" ? "Modo bruto: exibe somente as leituras válidas e mantém as falhas como lacunas." : "Modo tratado: mantém o último valor válido durante falhas apenas para facilitar a visualização, sem alterar o banco de dados."}>
