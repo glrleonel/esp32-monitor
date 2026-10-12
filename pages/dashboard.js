@@ -324,8 +324,19 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
   const timeTicks = Array.from({ length: tickCount }, (_, i) => new Date(firstTime + (i * timeRange) / (tickCount - 1)));
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <svg width={width} height={height} style={{ background: "linear-gradient(180deg,#111122,#0b0b14)", border: "1px solid " + theme.border, borderRadius: 16 }}>
+    <div style={{ width: "100%", minWidth: 0, overflow: "hidden" }}>
+      <svg
+        viewBox={"0 0 " + width + " " + height}
+        preserveAspectRatio="xMidYMid meet"
+        style={{
+          width: "100%",
+          height: "auto",
+          display: "block",
+          background: "linear-gradient(180deg,#111122,#0b0b14)",
+          border: "1px solid " + theme.border,
+          borderRadius: 16
+        }}
+      >
         {alarmIntervals.map((occ, index) => {
           const x1 = xTime(occ.start);
           const endRef = occ.end || occ.lastInvalid || occ.start;
@@ -526,6 +537,10 @@ export default function Dashboard() {
         height: 100%;
         min-height: 0;
       }
+      .analysis-grid {
+        width: 100%;
+        min-width: 0;
+      }
       @media (max-width: 1050px) {
         .monitor-top-grid {
           grid-template-columns: 1fr;
@@ -543,6 +558,9 @@ export default function Dashboard() {
         }
         .monitor-top-grid > section {
           height: auto !important;
+        }
+        .analysis-grid {
+          grid-template-columns: 1fr !important;
         }
       }
       @media (max-width: 700px) {
@@ -644,7 +662,7 @@ export default function Dashboard() {
         onClear={() => setSelectedSensors([])}
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(300px,1fr)", gap: 16, alignItems: "start" }}>
+      <div className="analysis-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,2.7fr) minmax(280px,.9fr)", gap: 16, alignItems: "start" }}>
         <div>
           <TemperatureAnalysisChart rows={history} selectedKeys={selectedSensors} analyses={selectedDayAnalyses} mode={viewMode} />
           <p style={{ marginBottom: 0, color: theme.muted, fontSize: 11 }}>
