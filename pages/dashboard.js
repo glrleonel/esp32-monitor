@@ -376,22 +376,21 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
 
 function IntegrityPanel({ selectedSensors, analyses, date }) {
   const [detailKey, setDetailKey] = useState(null);
+  const [showShort, setShowShort] = useState(false);
 
   useEffect(() => {
-    setDetailKey((current) => {
-      if (!selectedSensors.length) return null;
-      return selectedSensors.some((sensor) => sensor.key === current)
-        ? current
-        : selectedSensors[0].key;
-    });
-  }, [selectedSensors]);
+    if (detailKey && !selectedSensors.some((sensor) => sensor.key === detailKey)) {
+      setDetailKey(null);
+      setShowShort(false);
+    }
+  }, [selectedSensors, detailKey]);
 
   if (!selectedSensors.length) {
     return <p style={{ color: theme.muted }}>Selecione sensores para visualizar a integridade da aquisição.</p>;
   }
 
-  const detailSensor = selectedSensors.find((sensor) => sensor.key === detailKey) || selectedSensors[0];
-  const detail = analyses[detailSensor.key];
+  const detailSensor = selectedSensors.find((sensor) => sensor.key === detailKey) || null;
+  const detail = detailSensor ? analyses[detailSensor.key] : null;
   const alarmOccurrences = detail ? detail.occurrences.filter((occ) => occ.alarm) : [];
   const shortOccurrences = detail ? detail.occurrences.filter((occ) => !occ.alarm) : [];
 
@@ -402,18 +401,23 @@ function IntegrityPanel({ selectedSensors, analyses, date }) {
     return { label: "OK", color: theme.ok, symbol: "●" };
   }
 
+  function toggleDetails(key) {
+    setShowShort(false);
+    setDetailKey((current) => current === key ? null : key);
+  }
+
   return <div>
-    <div style={{ overflowX: "auto", border: "1px solid " + theme.border, borderRadius: 12 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760, fontSize: 11 }}>
+    <div style={{ overflowX: "auto", border: "1px solid " + theme.border, borderRadius: 10 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700, fontSize: 10.5 }}>
         <thead>
-          <tr style={{ background: "rgba(255,255,255,.035)", color: theme.muted, textAlign: "left" }}>
-            <th style={{ padding: "10px 12px" }}>Sensor</th>
-            <th style={{ padding: "10px 12px" }}>Disponibilidade</th>
-            <th style={{ padding: "10px 12px" }}>Falha total</th>
-            <th style={{ padding: "10px 12px" }}>Maior falha</th>
-            <th style={{ padding: "10px 12px" }}>Inválidas</th>
-            <th style={{ padding: "10px 12px" }}>Alarmes</th>
-            <th style={{ padding: "10px 12px" }}>Status</th>
+          <tr style={{ background: "rgba(255,255,255,.03)", color: theme.muted, textAlign: "left" }}>
+            <th style={{ padding: "7px 10px" }}>Sensor</th>
+            <th style={{ padding: "7px 10px" }}>Disponibilidade</th>
+            <th style={{ padding: "7px 10px" }}>Falha total</th>
+            <th style={{ padding: "7px 10px" }}>Maior falha</th>
+            <th style={{ padding: "7px 10px" }}>Alarmes</th>
+            <th style={{ padding: "7px 10px" }}>Status</th>
+            <th style={{ padding: "7px 10px", width: 82 }}></th>
           </tr>
         </thead>
         <tbody>
@@ -421,124 +425,114 @@ function IntegrityPanel({ selectedSensors, analyses, date }) {
             const a = analyses[sensor.key];
             const status = statusFor(a);
             const availability = a && a.availability !== null ? a.availability : 0;
-            const selected = sensor.key === detailSensor.key;
+            const expanded = sensor.key === detailKey;
 
-            return <tr key={sensor.key} onClick={() => setDetailKey(sensor.key)} style={{
+            return <tr key={sensor.key} style={{
               borderTop: "1px solid " + theme.border,
-              background: selected ? "rgba(124,58,237,.09)" : "transparent",
-              cursor: "pointer"
+              background: expanded ? "rgba(124,58,237,.07)" : "transparent"
             }}>
-              <td style={{ padding: "10px 12px" }}>
-                <button type="button" onClick={() => setDetailKey(sensor.key)} style={{
-                  background: "transparent", border: "none", padding: 0, color: sensor.color,
-                  fontWeight: 800, cursor: "pointer", textAlign: "left"
-                }}>
-                  {sensor.label}
-                </button>
-                <div style={{ color: theme.muted, fontSize: 9, marginTop: 2 }}>{sensor.description}</div>
+              <td style={{ padding: "7px 10px" }}>
+                <b style={{ color: sensor.color }}>{sensor.label}</b>
+                <span style={{ color: theme.muted, marginLeft: 7, fontSize: 9 }}>{sensor.description}</span>
               </td>
-              <td style={{ padding: "10px 12px", minWidth: 135 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <td style={{ padding: "7px 10px", minWidth: 120 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                   <b>{a && a.availability !== null ? a.availability.toFixed(1) + "%" : "-"}</b>
-                </div>
-                <div style={{ height: 5, borderRadius: 999, background: "#10101d", marginTop: 5, overflow: "hidden" }}>
-                  <div style={{
-                    width: Math.max(0, Math.min(100, availability)) + "%",
-                    height: "100%", borderRadius: 999, background: status.color
-                  }} />
+                  <div style={{ width: 58, height: 4, borderRadius: 999, background: "#10101d", overflow: "hidden" }}>
+                    <div style={{
+                      width: Math.max(0, Math.min(100, availability)) + "%",
+                      height: "100%", borderRadius: 999, background: status.color
+                    }} />
+                  </div>
                 </div>
               </td>
-              <td style={{ padding: "10px 12px" }}><b>{a ? formatDuration(a.totalDowntimeMinutes) : "-"}</b></td>
-              <td style={{ padding: "10px 12px" }}><b>{a ? formatDuration(a.longestDowntimeMinutes) : "-"}</b></td>
-              <td style={{ padding: "10px 12px" }}><b>{a ? a.invalidCount : "-"}</b></td>
-              <td style={{ padding: "10px 12px" }}><b style={{ color: a && a.alarms.length ? theme.error : theme.text }}>{a ? a.alarms.length : "-"}</b></td>
-              <td style={{ padding: "10px 12px", color: status.color, fontWeight: 800, whiteSpace: "nowrap" }}>{status.symbol} {status.label}</td>
+              <td style={{ padding: "7px 10px" }}><b>{a ? formatDuration(a.totalDowntimeMinutes) : "-"}</b></td>
+              <td style={{ padding: "7px 10px" }}><b>{a ? formatDuration(a.longestDowntimeMinutes) : "-"}</b></td>
+              <td style={{ padding: "7px 10px" }}>
+                <b style={{ color: a && a.alarms.length ? theme.error : theme.text }}>{a ? a.alarms.length : "-"}</b>
+              </td>
+              <td style={{ padding: "7px 10px", color: status.color, fontWeight: 800, whiteSpace: "nowrap" }}>{status.symbol} {status.label}</td>
+              <td style={{ padding: "5px 8px", textAlign: "right" }}>
+                <button type="button" onClick={() => toggleDetails(sensor.key)} style={{
+                  background: expanded ? theme.primary : "transparent",
+                  color: expanded ? "white" : theme.primaryLight,
+                  border: "1px solid " + theme.border, borderRadius: 8,
+                  padding: "5px 8px", cursor: "pointer", fontSize: 9, fontWeight: 800
+                }}>
+                  {expanded ? "Fechar" : "Detalhes"}
+                </button>
+              </td>
             </tr>;
           })}
         </tbody>
       </table>
     </div>
 
+    {!detail && <p style={{ color: theme.muted, fontSize: 9.5, margin: "8px 2px 0" }}>
+      Clique em “Detalhes” somente quando quiser inspecionar as ocorrências de um sensor.
+    </p>}
+
     {detail && <div style={{
-      marginTop: 14, border: "1px solid " + theme.border, borderRadius: 12,
-      padding: 14, background: "rgba(255,255,255,.025)"
+      marginTop: 10, border: "1px solid " + theme.border, borderRadius: 10,
+      padding: 11, background: "rgba(255,255,255,.02)"
     }}>
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
         <div>
-          <h4 style={{ margin: 0, color: detailSensor.color, fontSize: 16 }}>{detailSensor.label}</h4>
-          <div style={{ color: theme.muted, fontSize: 10, marginTop: 2 }}>{detailSensor.description}</div>
+          <b style={{ color: detailSensor.color, fontSize: 13 }}>{detailSensor.label}</b>
+          <span style={{ color: theme.muted, fontSize: 9, marginLeft: 8 }}>{detailSensor.description}</span>
         </div>
         {(() => {
           const status = statusFor(detail);
-          return <span style={{ color: status.color, fontSize: 11, fontWeight: 800 }}>{status.symbol} {status.label}</span>;
+          return <span style={{ color: status.color, fontSize: 10, fontWeight: 800 }}>{status.symbol} {status.label}</span>;
         })()}
       </div>
 
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))",
-        gap: 8, marginTop: 12
-      }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
         {[
-          ["Falha total", formatDuration(detail.totalDowntimeMinutes)],
-          ["Maior falha", formatDuration(detail.longestDowntimeMinutes)],
-          ["Disponibilidade", detail.availability === null ? "-" : detail.availability.toFixed(1) + "%"],
-          ["Leituras inválidas", detail.invalidCount],
-          ["Mín / Máx", detail.min === null ? "-" : detail.min.toFixed(1) + " / " + detail.max.toFixed(1) + " °C"],
-          ["Média válida", detail.avg === null ? "-" : detail.avg.toFixed(1) + " °C"]
-        ].map(([label, value]) => <div key={label} style={{
-          background: "rgba(255,255,255,.035)", border: "1px solid " + theme.border,
-          borderRadius: 9, padding: "9px 10px"
+          ["Falha", formatDuration(detail.totalDowntimeMinutes)],
+          ["Maior", formatDuration(detail.longestDowntimeMinutes)],
+          ["Disp.", detail.availability === null ? "-" : detail.availability.toFixed(1) + "%"],
+          ["Inválidas", detail.invalidCount],
+          ["Mín/Máx", detail.min === null ? "-" : detail.min.toFixed(1) + "/" + detail.max.toFixed(1) + " °C"],
+          ["Média", detail.avg === null ? "-" : detail.avg.toFixed(1) + " °C"]
+        ].map(([label, value]) => <span key={label} style={{
+          border: "1px solid " + theme.border, borderRadius: 999,
+          padding: "5px 8px", background: "rgba(255,255,255,.03)", fontSize: 9.5
         }}>
-          <div style={{ color: theme.muted, fontSize: 9 }}>{label}</div>
-          <div style={{ marginTop: 2, fontWeight: 800, fontSize: 12 }}>{value}</div>
-        </div>)}
+          <span style={{ color: theme.muted }}>{label}: </span><b>{value}</b>
+        </span>)}
       </div>
 
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + theme.border }}>
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-          <strong style={{ fontSize: 12 }}>Alarmes acima de 30 min</strong>
-          <span style={{ color: alarmOccurrences.length ? theme.error : theme.ok, fontSize: 10, fontWeight: 800 }}>
-            {alarmOccurrences.length ? alarmOccurrences.length + " ocorrência(s)" : "Nenhum alarme"}
+      <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid " + theme.border }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center" }}>
+          <b style={{ fontSize: 10.5 }}>Alarmes &gt; 30 min</b>
+          <span style={{ color: alarmOccurrences.length ? theme.error : theme.ok, fontSize: 9.5, fontWeight: 800 }}>
+            {alarmOccurrences.length ? alarmOccurrences.length + " ocorrência(s)" : "Nenhum"}
           </span>
         </div>
 
-        {!alarmOccurrences.length && <p style={{ color: theme.muted, fontSize: 10, margin: "8px 0 0" }}>
-          Nenhuma interrupção superior a 30 minutos neste sensor.
-        </p>}
-
-        {alarmOccurrences.length > 0 && <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))",
-          gap: 8, marginTop: 9
-        }}>
-          {alarmOccurrences.map((occ, index) => <div key={index} style={{
-            border: "1px solid rgba(239,68,68,.55)", background: "rgba(239,68,68,.07)",
-            borderRadius: 9, padding: "9px 10px"
+        {alarmOccurrences.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+          {alarmOccurrences.map((occ, index) => <span key={index} style={{
+            border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.06)",
+            borderRadius: 999, padding: "5px 8px", color: theme.error, fontSize: 9.5, fontWeight: 700
           }}>
-            <div style={{ color: theme.error, fontSize: 10, fontWeight: 800 }}>⚠ ALARME</div>
-            <div style={{ marginTop: 3, fontSize: 11, fontWeight: 700 }}>
-              {formatTime(occ.start)} → {occ.end ? formatTime(occ.end) : "fim do período"}
-            </div>
-            <div style={{ marginTop: 2, color: theme.muted, fontSize: 10 }}>{formatDuration(occ.durationMinutes)}</div>
-          </div>)}
+            {formatTime(occ.start)}–{occ.end ? formatTime(occ.end) : "fim"} · {formatDuration(occ.durationMinutes)}
+          </span>)}
         </div>}
       </div>
 
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + theme.border }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <strong style={{ fontSize: 12 }}>Interrupções curtas</strong>
-          <span style={{ color: theme.muted, fontSize: 10 }}>
-            {shortOccurrences.length} ocorrência(s)
-          </span>
-        </div>
+      <div style={{ marginTop: 9, paddingTop: 9, borderTop: "1px solid " + theme.border }}>
+        <button type="button" onClick={() => setShowShort((v) => !v)} style={{
+          background: "transparent", color: theme.muted, border: "none",
+          padding: 0, cursor: "pointer", fontSize: 9.5, fontWeight: 700
+        }}>
+          {showShort ? "Ocultar" : "Ver"} interrupções curtas ({shortOccurrences.length})
+        </button>
 
-        {!shortOccurrences.length && <p style={{ color: theme.muted, fontSize: 10, margin: "8px 0 0" }}>
-          Nenhuma interrupção curta registrada.
-        </p>}
-
-        {shortOccurrences.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 9 }}>
+        {showShort && shortOccurrences.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
           {shortOccurrences.map((occ, index) => <span key={index} style={{
-            border: "1px solid " + theme.border, background: "rgba(255,255,255,.035)",
-            borderRadius: 999, padding: "5px 8px", color: theme.muted, fontSize: 9.5
+            border: "1px solid " + theme.border, background: "rgba(255,255,255,.025)",
+            borderRadius: 999, padding: "4px 7px", color: theme.muted, fontSize: 8.8
           }}>
             {formatTime(occ.start)}–{occ.end ? formatTime(occ.end) : "fim"} · {formatDuration(occ.durationMinutes)}
           </span>)}
