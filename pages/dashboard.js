@@ -507,35 +507,42 @@ export default function Dashboard() {
     <style>{`
       .monitor-top-grid {
         display: grid;
-        grid-template-columns: minmax(300px, 0.82fr) minmax(680px, 2.18fr);
+        grid-template-columns: minmax(380px, 1fr) minmax(0, 2.1fr);
         gap: 16px;
-        align-items: start;
+        align-items: stretch;
       }
       .monitor-status-column {
         display: grid;
-        grid-template-rows: 1fr 1fr;
+        grid-template-rows: 1.08fr 0.92fr;
         gap: 16px;
         min-width: 0;
+        height: 430px;
       }
       .sensor-grid-3x3 {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: repeat(3, auto);
+        grid-template-rows: repeat(3, minmax(0, 1fr));
         gap: 8px;
-        height: auto;
+        height: 100%;
         min-height: 0;
       }
       @media (max-width: 1050px) {
         .monitor-top-grid {
           grid-template-columns: 1fr;
+          align-items: start;
         }
         .monitor-status-column {
           grid-template-columns: 1fr 1fr;
           grid-template-rows: auto;
+          height: auto;
         }
         .sensor-grid-3x3 {
+          grid-template-rows: repeat(3, auto);
           min-height: 0;
           height: auto;
+        }
+        .monitor-top-grid > section {
+          height: auto !important;
         }
       }
       @media (max-width: 700px) {
@@ -589,6 +596,10 @@ export default function Dashboard() {
       <Card
         title="Temperaturas"
         subtitle="Clique nos sensores para incluí-los ou removê-los da análise"
+        style={{ height: 430, display: "flex", flexDirection: "column" }}
+        contentStyle={{ flex: 1, minHeight: 0 }}
+      >
+        <div className="monitor-temperature-card" style={{ display: "contents" }}>
       >
         <div className="sensor-grid-3x3">
           {sensorSeries.map((sensor) => <SensorBox
@@ -599,6 +610,7 @@ export default function Dashboard() {
             selected={selectedSensors.includes(sensor.key)}
             onClick={() => toggleSensor(sensor.key)}
           />)}
+        </div>
         </div>
       </Card>
     </div>
