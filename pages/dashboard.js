@@ -377,7 +377,7 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
 function IntegrityPanel({ selectedSensors, analyses, date }) {
   if (!selectedSensors.length) return <p style={{ color: theme.muted }}>Selecione sensores para visualizar as ocorrências.</p>;
 
-  return <div style={{ maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
+  return <div style={{ paddingRight: 4 }}>
     <p style={{ marginTop: 0, color: theme.muted, fontSize: 12 }}>Data analisada: {date}</p>
 
     {selectedSensors.map((sensor) => {
@@ -540,6 +540,7 @@ export default function Dashboard() {
       .analysis-grid {
         width: 100%;
         min-width: 0;
+        grid-template-columns: 1fr !important;
       }
       @media (max-width: 1050px) {
         .monitor-top-grid {
@@ -558,9 +559,6 @@ export default function Dashboard() {
         }
         .monitor-top-grid > section {
           height: auto !important;
-        }
-        .analysis-grid {
-          grid-template-columns: 1fr !important;
         }
       }
       @media (max-width: 700px) {
@@ -662,7 +660,7 @@ export default function Dashboard() {
         onClear={() => setSelectedSensors([])}
       />
 
-      <div className="analysis-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,2.7fr) minmax(280px,.9fr)", gap: 16, alignItems: "start" }}>
+      <div className="analysis-grid" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, alignItems: "start", width: "100%", minWidth: 0 }}>
         <div>
           <TemperatureAnalysisChart rows={history} selectedKeys={selectedSensors} analyses={selectedDayAnalyses} mode={viewMode} />
           <p style={{ marginBottom: 0, color: theme.muted, fontSize: 11 }}>
