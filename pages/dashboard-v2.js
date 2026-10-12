@@ -818,12 +818,22 @@ export default function Dashboard() {
       background: "linear-gradient(135deg,rgba(124,58,237,.32),rgba(17,17,34,.95))",
       border: "1px solid " + theme.border, borderRadius: 22, padding: 24, marginBottom: 20
     }}>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-        <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
-        <span style={{ border: "1px solid " + theme.primaryLight, color: theme.primaryLight, borderRadius: 999, padding: "4px 9px", fontSize: 10, fontWeight: 800 }}>VERSÃO EXPERIMENTAL</span>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
+            <span style={{ border: "1px solid " + theme.primaryLight, color: theme.primaryLight, borderRadius: 999, padding: "4px 9px", fontSize: 10, fontWeight: 800 }}>VERSÃO EXPERIMENTAL</span>
+          </div>
+          <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
+          <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
+        </div>
+        <a href="/graficos" style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: theme.primary, color: "white", textDecoration: "none",
+          border: "1px solid " + theme.primaryLight, borderRadius: 10,
+          padding: "10px 14px", fontWeight: 800, fontSize: 12, whiteSpace: "nowrap"
+        }}>Gráficos para TFC</a>
       </div>
-      <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
-      <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
     </header>
 
     <div className="monitor-top-grid" style={{ marginBottom: 16 }}>
