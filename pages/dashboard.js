@@ -616,7 +616,6 @@ export default function Dashboard() {
         contentStyle={{ flex: 1, minHeight: 0 }}
       >
         <div className="monitor-temperature-card" style={{ display: "contents" }}>
-      >
         <div className="sensor-grid-3x3">
           {sensorSeries.map((sensor) => <SensorBox
             key={sensor.key}
