@@ -238,6 +238,7 @@ function SensorSelector({ selectedKeys, onToggle, onAll, onClear }) {
 }
 
 function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
   const data = sortRowsAsc(rows);
   if (!data.length) return <p style={{ color: theme.muted }}>Sem dados para o dia selecionado.</p>;
   if (!selectedKeys.length) return <p style={{ color: theme.muted }}>Selecione pelo menos um sensor.</p>;
@@ -316,6 +317,36 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
     return segments;
   }
 
+  function nearestIndexForTime(targetTime) {
+    let lo = 0;
+    let hi = data.length - 1;
+
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const midTime = new Date(data[mid].created_at).getTime();
+      if (midTime < targetTime) lo = mid + 1;
+      else hi = mid;
+    }
+
+    if (lo === 0) return 0;
+    const currentTime = new Date(data[lo].created_at).getTime();
+    const previousTime = new Date(data[lo - 1].created_at).getTime();
+    return Math.abs(currentTime - targetTime) < Math.abs(previousTime - targetTime) ? lo : lo - 1;
+  }
+
+  function handleMouseMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = (event.clientX - rect.left) * (width / rect.width);
+
+    if (svgX < paddingLeft || svgX > width - paddingRight) {
+      setHoverIndex(null);
+      return;
+    }
+
+    const targetTime = firstTime + ((svgX - paddingLeft) / plotWidth) * timeRange;
+    setHoverIndex(nearestIndexForTime(targetTime));
+  }
+
   const selectedSensors = sensorSeries.filter((s) => selectedKeys.includes(s.key));
   const alarmIntervals = selectedSensors.flatMap((sensor) =>
     (analyses[sensor.key] ? analyses[sensor.key].alarms : []).map((occ) => ({ ...occ, sensor }))
@@ -323,15 +354,54 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
   const tickCount = 7;
   const timeTicks = Array.from({ length: tickCount }, (_, i) => new Date(firstTime + (i * timeRange) / (tickCount - 1)));
 
+  let hoverData = null;
+  if (hoverIndex !== null && data[hoverIndex]) {
+    const hoverRow = data[hoverIndex];
+    const hoverX = xTime(hoverRow.created_at);
+    const readings = selectedSensors.map((sensor) => {
+      const point = buildPoints(sensor.key)[hoverIndex];
+      const value = mode === "raw" ? point.rawValue : point.displayValue;
+      return {
+        sensor,
+        value,
+        valid: point.rawValid,
+        imputed: mode === "treated" && point.imputed
+      };
+    });
+
+    const tooltipWidth = 215;
+    const tooltipHeight = 34 + readings.length * 18;
+    const tooltipX = hoverX + tooltipWidth + 16 > width - paddingRight
+      ? Math.max(paddingLeft + 4, hoverX - tooltipWidth - 12)
+      : hoverX + 12;
+
+    hoverData = {
+      hoverX,
+      tooltipX,
+      tooltipY: paddingTop + 10,
+      tooltipWidth,
+      tooltipHeight,
+      timeLabel: new Date(hoverRow.created_at).toLocaleTimeString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit"
+      }),
+      readings
+    };
+  }
+
   return (
     <div style={{ width: "100%", minWidth: 0, overflow: "hidden" }}>
       <svg
         viewBox={"0 0 " + width + " " + height}
         preserveAspectRatio="xMidYMid meet"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoverIndex(null)}
         style={{
           width: "100%",
           height: "auto",
           display: "block",
+          cursor: "crosshair",
           background: "linear-gradient(180deg,#111122,#0b0b14)",
           border: "1px solid " + theme.border,
           borderRadius: 16
@@ -359,6 +429,63 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
         </text>)}
 
         {selectedSensors.flatMap((sensor) => renderSensorSegments(sensor))}
+
+        {hoverData && <g pointerEvents="none">
+          <line
+            x1={hoverData.hoverX} y1={paddingTop}
+            x2={hoverData.hoverX} y2={paddingTop + plotHeight}
+            stroke="#d4d4dc" strokeWidth="1" strokeDasharray="4 4" opacity="0.65"
+          />
+
+          {hoverData.readings.map(({ sensor, value }) => {
+            if (value === null || value === undefined) return null;
+            return <circle
+              key={sensor.key}
+              cx={hoverData.hoverX}
+              cy={y(value)}
+              r="4"
+              fill={sensor.color}
+              stroke="#0b0b14"
+              strokeWidth="2"
+            />;
+          })}
+
+          <rect
+            x={hoverData.tooltipX}
+            y={hoverData.tooltipY}
+            width={hoverData.tooltipWidth}
+            height={hoverData.tooltipHeight}
+            rx="9"
+            fill="#17172a"
+            stroke={theme.border}
+            strokeWidth="1"
+            opacity="0.97"
+          />
+
+          <text
+            x={hoverData.tooltipX + 11}
+            y={hoverData.tooltipY + 18}
+            fill={theme.text}
+            fontSize="11"
+            fontWeight="700"
+          >
+            {hoverData.timeLabel}
+          </text>
+
+          {hoverData.readings.map(({ sensor, value, valid, imputed }, index) => {
+            const yy = hoverData.tooltipY + 38 + index * 18;
+            const valueLabel = value === null || value === undefined
+              ? "sem leitura"
+              : value.toFixed(2) + " °C" + (imputed ? " (mantido)" : "");
+
+            return <g key={sensor.key + "-tooltip"}>
+              <circle cx={hoverData.tooltipX + 12} cy={yy - 3} r="3" fill={sensor.color} />
+              <text x={hoverData.tooltipX + 21} y={yy} fill={valid || mode === "treated" ? theme.text : theme.muted} fontSize="10">
+                {sensor.label}: {valueLabel}
+              </text>
+            </g>;
+          })}
+        </g>}
       </svg>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10 }}>
@@ -369,6 +496,7 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
           ? <span style={{ fontSize: 12, color: theme.muted }}>lacunas = ausência de leitura válida</span>
           : <span style={{ fontSize: 12, color: theme.muted }}>tracejado = último valor válido mantido apenas para visualização</span>}
         <span style={{ fontSize: 12, color: theme.error }}>faixa discreta = falha &gt; 30 min</span>
+        <span style={{ fontSize: 12, color: theme.muted }}>passe o mouse sobre o gráfico para ver horário e temperatura</span>
       </div>
     </div>
   );
