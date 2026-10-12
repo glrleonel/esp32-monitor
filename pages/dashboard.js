@@ -143,9 +143,21 @@ export default function Dashboard() {
 
   return <main style={{ minHeight: "100vh", background: `radial-gradient(circle at top left,rgba(124,58,237,.35),transparent 35%),${theme.bg}`, color: theme.text, padding: 24, fontFamily: "Arial" }}>
     <header style={{ background: "linear-gradient(135deg,rgba(124,58,237,.32),rgba(17,17,34,.95))", border: `1px solid ${theme.border}`, borderRadius: 22, padding: 24, marginBottom: 20 }}>
-      <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
-      <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
-      <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
+          <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
+          <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
+        </div>
+        <a href="/dashboard-v2" style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: theme.primary, color: "white", textDecoration: "none",
+          border: `1px solid ${theme.primaryLight}`, borderRadius: 10,
+          padding: "10px 14px", fontWeight: 800, fontSize: 13, whiteSpace: "nowrap"
+        }}>
+          Abrir versão nova
+        </a>
+      </div>
     </header>
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 16, marginBottom: 16 }}>
