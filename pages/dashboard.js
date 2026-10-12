@@ -13,9 +13,22 @@ const theme = {
 };
 
 const sensorColors = ["#a78bfa", "#ef4444", "#ec4899", "#22c55e", "#e5e7eb", "#38bdf8", "#f59e0b", "#14b8a6", "#f97316"];
+const sensorDescriptions = [
+  "Referência ambiente",
+  "M2, provável origem da quebra",
+  "M2, região crítica fraturada",
+  "M4, origem da trinca",
+  "M4, caixa de junção",
+  "M3, região associada à trinca",
+  "M3, região íntegra de referência",
+  "M1, região íntegra de referência",
+  "M1, região associada à trinca"
+];
+
 const sensorSeries = Array.from({ length: 9 }, (_, i) => ({
   key: "temp_sensor" + (i + 1),
   label: "Sensor " + (i + 1),
+  description: sensorDescriptions[i],
   color: sensorColors[i]
 }));
 
@@ -188,7 +201,10 @@ function SensorBox({ sensor, latestValue, analysis, selected, onClick }) {
         <span style={{ color: theme.muted, fontSize: 12 }}>{sensor.label}</span>
         <span style={{ color: statusColor, fontSize: 11, fontWeight: 800 }}>● {statusText}</span>
       </div>
-      <div style={{ marginTop: 6, fontSize: 20, fontWeight: 800 }}>
+      <div style={{ marginTop: 5, minHeight: 28, color: "#d4d4dc", fontSize: 10.5, lineHeight: 1.3 }}>
+        {sensor.description}
+      </div>
+      <div style={{ marginTop: 5, fontSize: 20, fontWeight: 800 }}>
         {shownValue === null ? "-" : shownValue.toFixed(2)} <span style={{ fontSize: 12, color: theme.muted }}>°C</span>
       </div>
       {!latestIsValid && shownValue !== null && <div style={{ color: theme.muted, fontSize: 10, marginTop: 2 }}>última leitura válida</div>}
@@ -219,7 +235,7 @@ function SensorSelector({ selectedKeys, onToggle, onAll, onClear }) {
   );
 }
 
-function TemperatureAnalysisChart({ rows, selectedKeys, analyses }) {
+function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
   const data = sortRowsAsc(rows);
   if (!data.length) return <p style={{ color: theme.muted }}>Sem dados para o dia selecionado.</p>;
   if (!selectedKeys.length) return <p style={{ color: theme.muted }}>Selecione pelo menos um sensor.</p>;
@@ -240,26 +256,62 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses }) {
   const xTime = (createdAt) => paddingLeft + ((new Date(createdAt).getTime() - firstTime) * plotWidth) / timeRange;
   const y = (value) => paddingTop + ((max - value) * plotHeight) / range;
 
-  function makePath(key) {
-    let started = false;
-    let previousTime = null;
-    const parts = [];
-
-    data.forEach((row) => {
-      const currentTime = new Date(row.created_at).getTime();
+  function buildPoints(key) {
+    let lastValid = null;
+    return data.map((row) => {
       const valid = isValidTemp(row[key]);
-      const gapTooLarge = previousTime !== null && currentTime - previousTime > SAMPLE_INTERVAL_MINUTES * 2.5 * 60 * 1000;
-
-      if (!valid || gapTooLarge) started = false;
-      if (valid) {
-        const command = started ? "L" : "M";
-        parts.push(command + " " + xTime(row.created_at) + " " + y(Number(row[key])));
-        started = true;
-      }
-      previousTime = currentTime;
+      if (valid) lastValid = Number(row[key]);
+      return {
+        created_at: row.created_at,
+        rawValid: valid,
+        rawValue: valid ? Number(row[key]) : null,
+        displayValue: valid ? Number(row[key]) : lastValid,
+        imputed: !valid && lastValid !== null
+      };
     });
+  }
 
-    return parts.join(" ");
+  function renderSensorSegments(sensor) {
+    const points = buildPoints(sensor.key);
+    const segments = [];
+
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1];
+      const b = points[i];
+      const gapMs = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      const gapTooLarge = gapMs > SAMPLE_INTERVAL_MINUTES * 2.5 * 60 * 1000;
+
+      if (mode === "raw") {
+        if (!a.rawValid || !b.rawValid || gapTooLarge) continue;
+        segments.push(
+          <line
+            key={sensor.key + "-raw-" + i}
+            x1={xTime(a.created_at)} y1={y(a.rawValue)}
+            x2={xTime(b.created_at)} y2={y(b.rawValue)}
+            stroke={sensor.color} strokeWidth="2.6" strokeLinecap="round"
+          />
+        );
+        continue;
+      }
+
+      if (a.displayValue === null || b.displayValue === null) continue;
+      const estimated = a.imputed || b.imputed || gapTooLarge;
+
+      segments.push(
+        <line
+          key={sensor.key + "-treated-" + i}
+          x1={xTime(a.created_at)} y1={y(a.displayValue)}
+          x2={xTime(b.created_at)} y2={y(b.displayValue)}
+          stroke={sensor.color}
+          strokeWidth={estimated ? "2.1" : "2.6"}
+          strokeOpacity={estimated ? "0.58" : "1"}
+          strokeDasharray={estimated ? "6 5" : undefined}
+          strokeLinecap="round"
+        />
+      );
+    }
+
+    return segments;
   }
 
   const selectedSensors = sensorSeries.filter((s) => selectedKeys.includes(s.key));
@@ -276,7 +328,7 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses }) {
           const x1 = xTime(occ.start);
           const endRef = occ.end || occ.lastInvalid || occ.start;
           const x2 = Math.max(x1 + 3, xTime(endRef));
-          return <rect key={occ.sensor.key + "-alarm-" + index} x={x1} y={paddingTop} width={Math.max(3, x2 - x1)} height={plotHeight} fill={theme.error} opacity="0.09" />;
+          return <rect key={occ.sensor.key + "-alarm-" + index} x={x1} y={paddingTop} width={Math.max(3, x2 - x1)} height={plotHeight} fill={theme.error} opacity="0.055" />;
         })}
 
         {[0, .25, .5, .75, 1].map((p) => {
@@ -293,27 +345,17 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses }) {
           {tick.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}
         </text>)}
 
-        {selectedSensors.map((sensor) => <path key={sensor.key} d={makePath(sensor.key)} fill="none" stroke={sensor.color} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />)}
-
-        {selectedSensors.map((sensor, sensorIndex) =>
-          data.map((row, rowIndex) => {
-            if (isValidTemp(row[sensor.key])) return null;
-            const xx = xTime(row.created_at);
-            const yy = paddingTop + plotHeight - 7 - sensorIndex * 5;
-            return <g key={sensor.key + "-invalid-" + rowIndex} opacity="0.9">
-              <line x1={xx - 2.5} y1={yy - 2.5} x2={xx + 2.5} y2={yy + 2.5} stroke={sensor.color} strokeWidth="1.5" />
-              <line x1={xx - 2.5} y1={yy + 2.5} x2={xx + 2.5} y2={yy - 2.5} stroke={sensor.color} strokeWidth="1.5" />
-            </g>;
-          })
-        )}
+        {selectedSensors.flatMap((sensor) => renderSensorSegments(sensor))}
       </svg>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10 }}>
         {selectedSensors.map((sensor) => <span key={sensor.key} style={{ fontSize: 12, color: theme.text }}>
           <span style={{ color: sensor.color, fontWeight: 900 }}>●</span> {sensor.label}
         </span>)}
-        <span style={{ fontSize: 12, color: theme.muted }}>× = leitura inválida</span>
-        <span style={{ fontSize: 12, color: theme.error }}>faixa vermelha = falha &gt; 30 min</span>
+        {mode === "raw"
+          ? <span style={{ fontSize: 12, color: theme.muted }}>lacunas = ausência de leitura válida</span>
+          : <span style={{ fontSize: 12, color: theme.muted }}>tracejado = último valor válido mantido apenas para visualização</span>}
+        <span style={{ fontSize: 12, color: theme.error }}>faixa discreta = falha &gt; 30 min</span>
       </div>
     </div>
   );
@@ -381,6 +423,7 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState(todayBrazil());
   const [chartDate, setChartDate] = useState(todayBrazil());
   const [selectedSensors, setSelectedSensors] = useState(["temp_sensor1"]);
+  const [viewMode, setViewMode] = useState("treated");
 
   async function loadData() {
     try {
@@ -463,44 +506,65 @@ export default function Dashboard() {
       background: "linear-gradient(135deg,rgba(124,58,237,.32),rgba(17,17,34,.95))",
       border: "1px solid " + theme.border, borderRadius: 22, padding: 24, marginBottom: 20
     }}>
-      <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+        <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
+        <span style={{ border: "1px solid " + theme.primaryLight, color: theme.primaryLight, borderRadius: 999, padding: "4px 9px", fontSize: 10, fontWeight: 800 }}>VERSÃO EXPERIMENTAL</span>
+      </div>
       <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
       <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
     </header>
 
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 16, marginBottom: 16 }}>
-      <Card title="Status geral" subtitle="Último estado recebido do ESP32 principal">
-        <p style={{ color: systemOk ? theme.ok : theme.warning, fontWeight: 800 }}>{systemOk ? "● Operacional" : "● Parcial / Atenção"}</p>
-        <p><b>Última leitura:</b> {formatDate(data.created_at)}</p>
-        <p><b>Atualizado:</b> {timeAgo(data.created_at)}</p>
-        <p><b>Última captura:</b> {formatDate(data.last_capture)}</p>
-        <p><b>Erro:</b> {data.error || "-"}</p>
-      </Card>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16, alignItems: "stretch" }}>
+      <div style={{ flex: "1 1 310px", minWidth: 280, display: "flex", flexDirection: "column", gap: 16 }}>
+        <Card title="Status geral" subtitle="Último estado recebido do ESP32 principal">
+          <p style={{ color: systemOk ? theme.ok : theme.warning, fontWeight: 800 }}>{systemOk ? "● Operacional" : "● Parcial / Atenção"}</p>
+          <p><b>Última leitura:</b> {formatDate(data.created_at)}</p>
+          <p><b>Atualizado:</b> {timeAgo(data.created_at)}</p>
+          <p><b>Última captura:</b> {formatDate(data.last_capture)}</p>
+          <p><b>Erro:</b> {data.error || "-"}</p>
+        </Card>
 
-      <Card title="Temperaturas" subtitle="Clique nos sensores para incluí-los ou removê-los da análise">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))", gap: 10 }}>
-          {sensorSeries.map((sensor) => <SensorBox
-            key={sensor.key}
-            sensor={sensor}
-            latestValue={data[sensor.key]}
-            analysis={todayAnalyses[sensor.key]}
-            selected={selectedSensors.includes(sensor.key)}
-            onClick={() => toggleSensor(sensor.key)}
-          />)}
-        </div>
-      </Card>
+        <Card title="ESP32-CAM" subtitle="Status repassado pelo ESP32 principal">
+          <p><b>CAM:</b> <StatusDot ok={Boolean(data.cam_ok)} labelOk="Online" labelFail="Offline" /></p>
+          <p><b>SD:</b> <StatusDot ok={Boolean(data.sd_ok)} labelOk="OK" labelFail="Falha" /></p>
+          <p><b>Última foto no CAM:</b><br /><span style={{ color: theme.muted, wordBreak: "break-all" }}>{data.cam_last_photo || "Nenhuma foto registrada"}</span></p>
+          <p><b>Timestamp CAM:</b> <span style={{ color: theme.muted }}>{data.cam_timestamp || "-"}</span></p>
+        </Card>
+      </div>
 
-      <Card title="ESP32-CAM" subtitle="Status repassado pelo ESP32 principal">
-        <p><b>CAM:</b> <StatusDot ok={Boolean(data.cam_ok)} labelOk="Online" labelFail="Offline" /></p>
-        <p><b>SD:</b> <StatusDot ok={Boolean(data.sd_ok)} labelOk="OK" labelFail="Falha" /></p>
-        <p><b>Última foto no CAM:</b><br /><span style={{ color: theme.muted, wordBreak: "break-all" }}>{data.cam_last_photo || "Nenhuma foto registrada"}</span></p>
-        <p><b>Timestamp CAM:</b> <span style={{ color: theme.muted }}>{data.cam_timestamp || "-"}</span></p>
-      </Card>
+      <div style={{ flex: "2.4 1 650px", minWidth: 0 }}>
+        <Card title="Temperaturas" subtitle="Clique nos sensores para incluí-los ou removê-los da análise">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
+            {sensorSeries.map((sensor) => <SensorBox
+              key={sensor.key}
+              sensor={sensor}
+              latestValue={data[sensor.key]}
+              analysis={todayAnalyses[sensor.key]}
+              selected={selectedSensors.includes(sensor.key)}
+              onClick={() => toggleSensor(sensor.key)}
+            />)}
+          </div>
+        </Card>
+      </div>
     </div>
 
-    <Card title="Análise dos sensores" subtitle="Dados brutos do dia selecionado. Leituras inválidas não são substituídas no banco nem no gráfico.">
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
+    <Card title="Análise dos sensores" subtitle={viewMode === "raw" ? "Modo bruto: exibe somente as leituras válidas e mantém as falhas como lacunas." : "Modo tratado: mantém o último valor válido durante falhas apenas para facilitar a visualização, sem alterar o banco de dados."}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <DateInput value={chartDate} onChange={(e) => setChartDate(e.target.value)} />
+
+        <div style={{ display: "inline-flex", border: "1px solid " + theme.border, borderRadius: 10, overflow: "hidden", marginBottom: 10 }}>
+          <button type="button" onClick={() => setViewMode("raw")} style={{
+            border: "none", cursor: "pointer", padding: "9px 13px", fontWeight: 800,
+            background: viewMode === "raw" ? theme.primary : "#111122",
+            color: viewMode === "raw" ? "white" : theme.muted
+          }}>Brutos</button>
+          <button type="button" onClick={() => setViewMode("treated")} style={{
+            border: "none", cursor: "pointer", padding: "9px 13px", fontWeight: 800,
+            background: viewMode === "treated" ? theme.primary : "#111122",
+            color: viewMode === "treated" ? "white" : theme.muted
+          }}>Tratados</button>
+        </div>
+
         <span style={{ color: sensorsWithAlarm ? theme.error : theme.ok, fontSize: 12, fontWeight: 800 }}>
           {sensorsWithAlarm ? "⚠ " + sensorsWithAlarm + " sensor(es) com falha > 30 min" : "● Nenhum alarme > 30 min nos sensores selecionados"}
         </span>
@@ -515,9 +579,11 @@ export default function Dashboard() {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(300px,1fr)", gap: 16, alignItems: "start" }}>
         <div>
-          <TemperatureAnalysisChart rows={history} selectedKeys={selectedSensors} analyses={selectedDayAnalyses} />
+          <TemperatureAnalysisChart rows={history} selectedKeys={selectedSensors} analyses={selectedDayAnalyses} mode={viewMode} />
           <p style={{ marginBottom: 0, color: theme.muted, fontSize: 11 }}>
-            As interrupções da curva representam ausência de leitura válida. Valores inválidos, como -1 °C, permanecem preservados no banco e não são utilizados como temperatura no gráfico.
+            {viewMode === "raw"
+              ? "No modo bruto, as falhas aparecem como lacunas na curva. Valores inválidos, como -1 °C e -127 °C, permanecem preservados no banco e no CSV."
+              : "No modo tratado, trechos tracejados representam períodos em que o último valor válido foi mantido somente para visualização. Os dados brutos armazenados no Supabase não são modificados."}
           </p>
         </div>
 
