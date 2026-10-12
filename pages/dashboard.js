@@ -375,43 +375,176 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
 }
 
 function IntegrityPanel({ selectedSensors, analyses, date }) {
-  if (!selectedSensors.length) return <p style={{ color: theme.muted }}>Selecione sensores para visualizar as ocorrências.</p>;
+  const [detailKey, setDetailKey] = useState(null);
 
-  return <div style={{ paddingRight: 4 }}>
-    <p style={{ marginTop: 0, color: theme.muted, fontSize: 12 }}>Data analisada: {date}</p>
+  useEffect(() => {
+    setDetailKey((current) => {
+      if (!selectedSensors.length) return null;
+      return selectedSensors.some((sensor) => sensor.key === current)
+        ? current
+        : selectedSensors[0].key;
+    });
+  }, [selectedSensors]);
 
-    {selectedSensors.map((sensor) => {
-      const a = analyses[sensor.key];
-      if (!a) return null;
-      const hasAlarm = a.alarms.length > 0;
+  if (!selectedSensors.length) {
+    return <p style={{ color: theme.muted }}>Selecione sensores para visualizar a integridade da aquisição.</p>;
+  }
 
-      return <div key={sensor.key} style={{
-        border: "1px solid " + (hasAlarm ? theme.error : theme.border),
-        borderRadius: 12, padding: 12, marginBottom: 12, background: "rgba(255,255,255,.035)"
+  const detailSensor = selectedSensors.find((sensor) => sensor.key === detailKey) || selectedSensors[0];
+  const detail = analyses[detailSensor.key];
+  const alarmOccurrences = detail ? detail.occurrences.filter((occ) => occ.alarm) : [];
+  const shortOccurrences = detail ? detail.occurrences.filter((occ) => !occ.alarm) : [];
+
+  function statusFor(analysis) {
+    if (!analysis) return { label: "Sem dados", color: theme.muted, symbol: "○" };
+    if (analysis.alarms.length > 0) return { label: "ALARME", color: theme.error, symbol: "⚠" };
+    if (analysis.invalidCount > 0) return { label: "ATENÇÃO", color: theme.warning, symbol: "●" };
+    return { label: "OK", color: theme.ok, symbol: "●" };
+  }
+
+  return <div>
+    <div style={{ overflowX: "auto", border: "1px solid " + theme.border, borderRadius: 12 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760, fontSize: 11 }}>
+        <thead>
+          <tr style={{ background: "rgba(255,255,255,.035)", color: theme.muted, textAlign: "left" }}>
+            <th style={{ padding: "10px 12px" }}>Sensor</th>
+            <th style={{ padding: "10px 12px" }}>Disponibilidade</th>
+            <th style={{ padding: "10px 12px" }}>Falha total</th>
+            <th style={{ padding: "10px 12px" }}>Maior falha</th>
+            <th style={{ padding: "10px 12px" }}>Inválidas</th>
+            <th style={{ padding: "10px 12px" }}>Alarmes</th>
+            <th style={{ padding: "10px 12px" }}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {selectedSensors.map((sensor) => {
+            const a = analyses[sensor.key];
+            const status = statusFor(a);
+            const availability = a && a.availability !== null ? a.availability : 0;
+            const selected = sensor.key === detailSensor.key;
+
+            return <tr key={sensor.key} onClick={() => setDetailKey(sensor.key)} style={{
+              borderTop: "1px solid " + theme.border,
+              background: selected ? "rgba(124,58,237,.09)" : "transparent",
+              cursor: "pointer"
+            }}>
+              <td style={{ padding: "10px 12px" }}>
+                <button type="button" onClick={() => setDetailKey(sensor.key)} style={{
+                  background: "transparent", border: "none", padding: 0, color: sensor.color,
+                  fontWeight: 800, cursor: "pointer", textAlign: "left"
+                }}>
+                  {sensor.label}
+                </button>
+                <div style={{ color: theme.muted, fontSize: 9, marginTop: 2 }}>{sensor.description}</div>
+              </td>
+              <td style={{ padding: "10px 12px", minWidth: 135 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <b>{a && a.availability !== null ? a.availability.toFixed(1) + "%" : "-"}</b>
+                </div>
+                <div style={{ height: 5, borderRadius: 999, background: "#10101d", marginTop: 5, overflow: "hidden" }}>
+                  <div style={{
+                    width: Math.max(0, Math.min(100, availability)) + "%",
+                    height: "100%", borderRadius: 999, background: status.color
+                  }} />
+                </div>
+              </td>
+              <td style={{ padding: "10px 12px" }}><b>{a ? formatDuration(a.totalDowntimeMinutes) : "-"}</b></td>
+              <td style={{ padding: "10px 12px" }}><b>{a ? formatDuration(a.longestDowntimeMinutes) : "-"}</b></td>
+              <td style={{ padding: "10px 12px" }}><b>{a ? a.invalidCount : "-"}</b></td>
+              <td style={{ padding: "10px 12px" }}><b style={{ color: a && a.alarms.length ? theme.error : theme.text }}>{a ? a.alarms.length : "-"}</b></td>
+              <td style={{ padding: "10px 12px", color: status.color, fontWeight: 800, whiteSpace: "nowrap" }}>{status.symbol} {status.label}</td>
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div>
+
+    {detail && <div style={{
+      marginTop: 14, border: "1px solid " + theme.border, borderRadius: 12,
+      padding: 14, background: "rgba(255,255,255,.025)"
+    }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+        <div>
+          <h4 style={{ margin: 0, color: detailSensor.color, fontSize: 16 }}>{detailSensor.label}</h4>
+          <div style={{ color: theme.muted, fontSize: 10, marginTop: 2 }}>{detailSensor.description}</div>
+        </div>
+        {(() => {
+          const status = statusFor(detail);
+          return <span style={{ color: status.color, fontSize: 11, fontWeight: 800 }}>{status.symbol} {status.label}</span>;
+        })()}
+      </div>
+
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))",
+        gap: 8, marginTop: 12
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-          <strong style={{ color: sensor.color }}>{sensor.label}</strong>
-          <span style={{ color: hasAlarm ? theme.error : theme.ok, fontSize: 11, fontWeight: 800 }}>{hasAlarm ? "⚠ ALARME" : "● OK"}</span>
+        {[
+          ["Falha total", formatDuration(detail.totalDowntimeMinutes)],
+          ["Maior falha", formatDuration(detail.longestDowntimeMinutes)],
+          ["Disponibilidade", detail.availability === null ? "-" : detail.availability.toFixed(1) + "%"],
+          ["Leituras inválidas", detail.invalidCount],
+          ["Mín / Máx", detail.min === null ? "-" : detail.min.toFixed(1) + " / " + detail.max.toFixed(1) + " °C"],
+          ["Média válida", detail.avg === null ? "-" : detail.avg.toFixed(1) + " °C"]
+        ].map(([label, value]) => <div key={label} style={{
+          background: "rgba(255,255,255,.035)", border: "1px solid " + theme.border,
+          borderRadius: 9, padding: "9px 10px"
+        }}>
+          <div style={{ color: theme.muted, fontSize: 9 }}>{label}</div>
+          <div style={{ marginTop: 2, fontWeight: 800, fontSize: 12 }}>{value}</div>
+        </div>)}
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + theme.border }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+          <strong style={{ fontSize: 12 }}>Alarmes acima de 30 min</strong>
+          <span style={{ color: alarmOccurrences.length ? theme.error : theme.ok, fontSize: 10, fontWeight: 800 }}>
+            {alarmOccurrences.length ? alarmOccurrences.length + " ocorrência(s)" : "Nenhum alarme"}
+          </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10, fontSize: 11 }}>
-          <div><span style={{ color: theme.muted }}>Falha total</span><br /><b>{formatDuration(a.totalDowntimeMinutes)}</b></div>
-          <div><span style={{ color: theme.muted }}>Maior falha</span><br /><b>{formatDuration(a.longestDowntimeMinutes)}</b></div>
-          <div><span style={{ color: theme.muted }}>Disponibilidade</span><br /><b>{a.availability === null ? "-" : a.availability.toFixed(1) + "%"}</b></div>
-          <div><span style={{ color: theme.muted }}>Inválidas</span><br /><b>{a.invalidCount}</b></div>
-          <div><span style={{ color: theme.muted }}>Mín / Máx</span><br /><b>{a.min === null ? "-" : a.min.toFixed(1) + " / " + a.max.toFixed(1) + " °C"}</b></div>
-          <div><span style={{ color: theme.muted }}>Média válida</span><br /><b>{a.avg === null ? "-" : a.avg.toFixed(1) + " °C"}</b></div>
-        </div>
+        {!alarmOccurrences.length && <p style={{ color: theme.muted, fontSize: 10, margin: "8px 0 0" }}>
+          Nenhuma interrupção superior a 30 minutos neste sensor.
+        </p>}
 
-        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid " + theme.border }}>
-          <div style={{ color: theme.muted, fontSize: 11, marginBottom: 5 }}>Ocorrências do dia</div>
-          {!a.occurrences.length && <div style={{ color: theme.ok, fontSize: 11 }}>Nenhuma leitura inválida registrada.</div>}
-          {a.occurrences.map((occ, index) => <div key={index} style={{ color: occ.alarm ? theme.error : theme.muted, fontSize: 11, marginBottom: 5 }}>
-            {formatTime(occ.start)} → {occ.end ? formatTime(occ.end) : "fim do período"} · {formatDuration(occ.durationMinutes)}{occ.alarm ? " · ALARME" : ""}
+        {alarmOccurrences.length > 0 && <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))",
+          gap: 8, marginTop: 9
+        }}>
+          {alarmOccurrences.map((occ, index) => <div key={index} style={{
+            border: "1px solid rgba(239,68,68,.55)", background: "rgba(239,68,68,.07)",
+            borderRadius: 9, padding: "9px 10px"
+          }}>
+            <div style={{ color: theme.error, fontSize: 10, fontWeight: 800 }}>⚠ ALARME</div>
+            <div style={{ marginTop: 3, fontSize: 11, fontWeight: 700 }}>
+              {formatTime(occ.start)} → {occ.end ? formatTime(occ.end) : "fim do período"}
+            </div>
+            <div style={{ marginTop: 2, color: theme.muted, fontSize: 10 }}>{formatDuration(occ.durationMinutes)}</div>
           </div>)}
+        </div>}
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + theme.border }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <strong style={{ fontSize: 12 }}>Interrupções curtas</strong>
+          <span style={{ color: theme.muted, fontSize: 10 }}>
+            {shortOccurrences.length} ocorrência(s)
+          </span>
         </div>
-      </div>;
-    })}
+
+        {!shortOccurrences.length && <p style={{ color: theme.muted, fontSize: 10, margin: "8px 0 0" }}>
+          Nenhuma interrupção curta registrada.
+        </p>}
+
+        {shortOccurrences.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 9 }}>
+          {shortOccurrences.map((occ, index) => <span key={index} style={{
+            border: "1px solid " + theme.border, background: "rgba(255,255,255,.035)",
+            borderRadius: 999, padding: "5px 8px", color: theme.muted, fontSize: 9.5
+          }}>
+            {formatTime(occ.start)}–{occ.end ? formatTime(occ.end) : "fim"} · {formatDuration(occ.durationMinutes)}
+          </span>)}
+        </div>}
+      </div>
+    </div>}
   </div>;
 }
 
