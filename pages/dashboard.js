@@ -195,21 +195,22 @@ function SensorBox({ sensor, latestValue, analysis, selected, onClick }) {
       textAlign: "left", width: "100%",
       background: selected ? "rgba(124,58,237,.18)" : "rgba(255,255,255,.055)",
       border: "1px solid " + (selected ? sensor.color : theme.border),
-      borderRadius: 14, padding: 13, color: theme.text, cursor: "pointer",
-      boxShadow: selected ? "0 0 0 1px " + sensor.color : "none"
+      borderRadius: 12, padding: 10, color: theme.text, cursor: "pointer",
+      boxShadow: selected ? "0 0 0 1px " + sensor.color : "none",
+      minHeight: 0
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
         <span style={{ color: theme.muted, fontSize: 12 }}>{sensor.label}</span>
         <span style={{ color: statusColor, fontSize: 11, fontWeight: 800 }}>● {statusText}</span>
       </div>
-      <div style={{ marginTop: 5, minHeight: 28, color: "#d4d4dc", fontSize: 10.5, lineHeight: 1.3 }}>
+      <div style={{ marginTop: 4, minHeight: 24, color: "#d4d4dc", fontSize: 9.5, lineHeight: 1.2 }}>
         {sensor.description}
       </div>
-      <div style={{ marginTop: 5, fontSize: 20, fontWeight: 800 }}>
+      <div style={{ marginTop: 4, fontSize: 18, fontWeight: 800 }}>
         {shownValue === null ? "-" : shownValue.toFixed(2)} <span style={{ fontSize: 12, color: theme.muted }}>°C</span>
       </div>
       {!latestIsValid && shownValue !== null && <div style={{ color: theme.muted, fontSize: 10, marginTop: 2 }}>última leitura válida</div>}
-      <div style={{ marginTop: 7, color: theme.muted, fontSize: 10, lineHeight: 1.45 }}>
+      <div style={{ marginTop: 5, color: theme.muted, fontSize: 9, lineHeight: 1.3 }}>
         <div>Última válida: {analysis && analysis.latestValid ? formatTime(analysis.latestValid.created_at) : "-"}</div>
         <div>Falha hoje: {analysis ? formatDuration(analysis.totalDowntimeMinutes) : "-"}</div>
         {!latestIsValid && <div style={{ color: statusColor }}>Sem leitura agora: {formatDuration(failureMinutes)}</div>}
@@ -508,7 +509,7 @@ export default function Dashboard() {
         display: grid;
         grid-template-columns: minmax(300px, 0.82fr) minmax(680px, 2.18fr);
         gap: 16px;
-        align-items: stretch;
+        align-items: start;
       }
       .monitor-status-column {
         display: grid;
@@ -519,10 +520,10 @@ export default function Dashboard() {
       .sensor-grid-3x3 {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        height: 100%;
-        min-height: 470px;
+        grid-template-rows: repeat(3, auto);
+        gap: 8px;
+        height: auto;
+        min-height: 0;
       }
       @media (max-width: 1050px) {
         .monitor-top-grid {
@@ -534,6 +535,7 @@ export default function Dashboard() {
         }
         .sensor-grid-3x3 {
           min-height: 0;
+          height: auto;
         }
       }
       @media (max-width: 700px) {
@@ -587,8 +589,6 @@ export default function Dashboard() {
       <Card
         title="Temperaturas"
         subtitle="Clique nos sensores para incluí-los ou removê-los da análise"
-        style={{ height: "100%" }}
-        contentStyle={{ height: "calc(100% - 8px)" }}
       >
         <div className="sensor-grid-3x3">
           {sensorSeries.map((sensor) => <SensorBox
