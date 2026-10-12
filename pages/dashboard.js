@@ -518,47 +518,35 @@ export default function Dashboard() {
     <style>{`
       .monitor-top-grid {
         display: grid;
-        grid-template-columns: minmax(380px, 1fr) minmax(0, 2.1fr);
+        grid-template-columns: minmax(340px, 0.95fr) minmax(0, 2.05fr);
         gap: 16px;
-        align-items: stretch;
+        align-items: start;
       }
       .monitor-status-column {
         display: grid;
-        grid-template-rows: 1.08fr 0.92fr;
+        grid-template-rows: 1fr 1fr;
         gap: 16px;
         min-width: 0;
-        height: 430px;
       }
       .sensor-grid-3x3 {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(3, auto);
         gap: 8px;
-        height: 100%;
+        height: auto;
         min-height: 0;
-      }
-      .analysis-grid {
-        width: 100%;
-        min-width: 0;
-        grid-template-columns: 1fr !important;
       }
       @media (max-width: 1050px) {
         .monitor-top-grid {
           grid-template-columns: 1fr;
-          align-items: start;
         }
         .monitor-status-column {
           grid-template-columns: 1fr 1fr;
           grid-template-rows: auto;
-          height: auto;
         }
         .sensor-grid-3x3 {
-          grid-template-rows: repeat(3, auto);
           min-height: 0;
           height: auto;
-        }
-        .monitor-top-grid > section {
-          height: auto !important;
         }
       }
       @media (max-width: 700px) {
@@ -612,10 +600,7 @@ export default function Dashboard() {
       <Card
         title="Temperaturas"
         subtitle="Clique nos sensores para incluí-los ou removê-los da análise"
-        style={{ height: 430, display: "flex", flexDirection: "column" }}
-        contentStyle={{ flex: 1, minHeight: 0 }}
       >
-        <div className="monitor-temperature-card" style={{ display: "contents" }}>
         <div className="sensor-grid-3x3">
           {sensorSeries.map((sensor) => <SensorBox
             key={sensor.key}
@@ -625,7 +610,6 @@ export default function Dashboard() {
             selected={selectedSensors.includes(sensor.key)}
             onClick={() => toggleSensor(sensor.key)}
           />)}
-        </div>
         </div>
       </Card>
     </div>
@@ -659,7 +643,7 @@ export default function Dashboard() {
         onClear={() => setSelectedSensors([])}
       />
 
-      <div className="analysis-grid" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, alignItems: "start", width: "100%", minWidth: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, alignItems: "start", width: "100%", minWidth: 0 }}>
         <div>
           <TemperatureAnalysisChart rows={history} selectedKeys={selectedSensors} analyses={selectedDayAnalyses} mode={viewMode} />
           <p style={{ marginBottom: 0, color: theme.muted, fontSize: 11 }}>
