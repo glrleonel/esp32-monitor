@@ -712,6 +712,7 @@ function integratePowerPoints(points, maxGapMinutes = 30) {
 }
 
 function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys }) {
+  const [hoverMinute, setHoverMinute] = useState(null);
   const start = timeToMinutes(startTime);
   const end = timeToMinutes(endTime);
   const width = 960, height = 390, left = 58, right = 24, top = 28, bottom = 58;
@@ -754,16 +755,75 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
     return sorted.map((p, i) => (i ? "L " : "M ") + x(p.time) + " " + y(p.value)).join(" ");
   }
 
+  function nearestPoint(points, targetMinute, maxGapMinutes) {
+    let best = null;
+    let bestGap = Infinity;
+    (points || []).forEach((p) => {
+      const gap = Math.abs(minutesFromIso(p.time) - targetMinute);
+      if (gap < bestGap) {
+        best = p;
+        bestGap = gap;
+      }
+    });
+    return best && bestGap <= maxGapMinutes ? best : null;
+  }
+
+  function handleSolarMouseMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = (event.clientX - rect.left) * (width / rect.width);
+    if (svgX < left || svgX > width - right) {
+      setHoverMinute(null);
+      return;
+    }
+    const minute = start + ((svgX - left) / plotWidth) * Math.max(1, end - start);
+    setHoverMinute(minute);
+  }
+
   const moduleEnergies = keys.map((key) => ({ key, energy: integratePowerPoints(clippedFox(key), 30) }));
   const totalEnergy = moduleEnergies.reduce((sum, item) => sum + item.energy, 0);
   const estimatedEnergy = integratePowerPoints(estimated, 90);
 
+  const hoverReadings = hoverMinute === null ? [] : [
+    ...keys.map((key) => ({
+      key,
+      label: key.replace("Power", "").toUpperCase(),
+      color: colors[key],
+      point: nearestPoint(clippedFox(key), hoverMinute, 15)
+    })),
+    {
+      key: "estimated",
+      label: "Estimativa INMET",
+      color: "#facc15",
+      point: nearestPoint(estimated, hoverMinute, 45)
+    }
+  ].filter((item) => item.point);
+
+  const hoverX = hoverMinute === null
+    ? null
+    : left + ((hoverMinute - start) / Math.max(1, end - start)) * plotWidth;
+  const hoverLabel = hoverMinute === null
+    ? ""
+    : String(Math.floor(hoverMinute / 60)).padStart(2, "0") + ":" +
+      String(Math.round(hoverMinute % 60)).padStart(2, "0");
+  const tooltipWidth = 190;
+  const tooltipHeight = 34 + hoverReadings.length * 20;
+  const tooltipX = hoverX === null
+    ? 0
+    : (hoverX + tooltipWidth + 16 > width - right
+      ? Math.max(left + 4, hoverX - tooltipWidth - 12)
+      : hoverX + 12);
+
   return <div>
     <div style={{ overflowX: "auto" }}>
-      <svg viewBox={"0 0 " + width + " " + height} style={{
-        width: "100%", minWidth: 720, background: "linear-gradient(180deg,#111122,#0b0b14)",
-        border: "1px solid " + theme.border, borderRadius: 16
-      }}>
+      <svg
+        viewBox={"0 0 " + width + " " + height}
+        onMouseMove={handleSolarMouseMove}
+        onMouseLeave={() => setHoverMinute(null)}
+        style={{
+          width: "100%", minWidth: 720, background: "linear-gradient(180deg,#111122,#0b0b14)",
+          border: "1px solid " + theme.border, borderRadius: 16, cursor: "crosshair"
+        }}
+      >
         {[0, .25, .5, .75, 1].map((p) => {
           const yy = top + p * plotHeight;
           const label = (yMax * (1 - p)).toFixed(2);
@@ -784,6 +844,42 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
           return pts.length > 1 ? <path key={key} d={pathFor(pts)} fill="none" stroke={colors[key]} strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" /> : null;
         })}
         {estimated.length > 1 && <path d={pathFor(estimated)} fill="none" stroke="#facc15" strokeWidth="2.4" strokeDasharray="8 6" strokeLinecap="round" />}
+
+        {hoverMinute !== null && hoverX !== null && <g pointerEvents="none">
+          <line
+            x1={hoverX} x2={hoverX}
+            y1={top} y2={top + plotHeight}
+            stroke="#f4f4f5" strokeWidth="1" strokeDasharray="4 4" opacity="0.7"
+          />
+          {hoverReadings.map((item) => <circle
+            key={"hover-" + item.key}
+            cx={hoverX}
+            cy={y(item.point.value)}
+            r="4.5"
+            fill={item.color}
+            stroke="#0b0b14"
+            strokeWidth="2"
+          />)}
+          <rect
+            x={tooltipX}
+            y={top + 10}
+            width={tooltipWidth}
+            height={tooltipHeight}
+            rx="9"
+            fill="#17172a"
+            stroke={theme.border}
+            opacity="0.97"
+          />
+          <text x={tooltipX + 11} y={top + 29} fill={theme.text} fontSize="11" fontWeight="700">
+            {hoverLabel}
+          </text>
+          {hoverReadings.map((item, index) => <g key={"tooltip-" + item.key}>
+            <circle cx={tooltipX + 12} cy={top + 49 + index * 20} r="3" fill={item.color} />
+            <text x={tooltipX + 21} y={top + 53 + index * 20} fill={item.color} fontSize="10.5">
+              {item.label}: {Number(item.point.value).toFixed(3)} kW
+            </text>
+          </g>)}
+        </g>}
       </svg>
     </div>
 
