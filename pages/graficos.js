@@ -705,6 +705,448 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
   </section>;
 }
 
+
+function dateListForMonth(monthValue) {
+  const [year, month] = String(monthValue).split("-").map(Number);
+  if (!year || !month) return [];
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return Array.from({ length: days }, (_, i) =>
+    year + "-" + String(month).padStart(2, "0") + "-" + String(i + 1).padStart(2, "0")
+  );
+}
+
+function dateListForYear(yearValue) {
+  const year = Number(yearValue);
+  if (!year) return [];
+  const dates = [];
+  for (let month = 1; month <= 12; month += 1) {
+    const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    for (let day = 1; day <= days; day += 1) {
+      dates.push(
+        year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0")
+      );
+    }
+  }
+  return dates;
+}
+
+function todayIsoBrazil() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
+async function fetchEnergyDayCached(date, startTime, endTime) {
+  const key = "foxess-energy-v2|" + date + "|" + startTime + "|" + endTime;
+  const today = todayIsoBrazil();
+
+  if (typeof window !== "undefined" && date !== today) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(key) || "null");
+      if (cached && cached.savedAt && Date.now() - cached.savedAt < 7 * 24 * 3600000) {
+        return cached.data;
+      }
+    } catch {}
+  }
+
+  const response = await fetch(
+    "/api/history?source=foxess-energy-day&date=" + date +
+    "&startTime=" + startTime + "&endTime=" + endTime
+  );
+  const json = await response.json();
+  if (!json.ok) throw new Error(json.message || json.error || "Falha ao consultar " + date);
+
+  if (typeof window !== "undefined" && date !== today) {
+    try {
+      localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: json }));
+    } catch {}
+  }
+
+  return json;
+}
+
+async function mapWithConcurrency(items, concurrency, worker, onProgress) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  let completed = 0;
+
+  async function runner() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) break;
+
+      try {
+        results[index] = await worker(items[index], index);
+      } catch (error) {
+        results[index] = { ok: false, error: error.message, date: items[index] };
+      }
+
+      completed += 1;
+      if (onProgress) onProgress(completed, items.length);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runner()));
+  return results;
+}
+
+function EnergyBarChart({ rows, selectedPVKeys }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const keys = selectedPVKeys || [];
+  const colors = {
+    pv1Power: "#7c3aed",
+    pv2Power: "#0284c7",
+    pv3Power: "#16a34a",
+    pv4Power: "#ea580c"
+  };
+
+  if (!rows.length) return <p style={{ color: theme.muted }}>Carregue um período para visualizar o gráfico.</p>;
+  if (!keys.length) return <p style={{ color: theme.warning }}>Selecione pelo menos um módulo.</p>;
+
+  const width = 1120;
+  const height = 520;
+  const left = 84, right = 26, top = 34, bottom = 100;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+
+  const values = rows.flatMap((row) => keys.map((key) => Number(row[key] || 0)));
+  const maxValue = Math.max(0.001, ...values);
+  const yMax = Math.ceil(maxValue * 10) / 10 || 0.1;
+  const y = (value) => top + ((yMax - Number(value || 0)) / yMax) * plotHeight;
+  const groupWidth = plotWidth / Math.max(1, rows.length);
+  const gap = Math.min(5, groupWidth * 0.08);
+  const barArea = Math.max(2, groupWidth - gap * 2);
+  const barWidth = Math.max(1.5, barArea / Math.max(1, keys.length) - 1.5);
+
+  function handleMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = (event.clientX - rect.left) * (width / rect.width);
+    if (svgX < left || svgX > width - right) {
+      setHoverIndex(null);
+      return;
+    }
+    const idx = Math.max(0, Math.min(rows.length - 1, Math.floor((svgX - left) / groupWidth)));
+    setHoverIndex(idx);
+  }
+
+  const hover = hoverIndex === null ? null : rows[hoverIndex];
+  const hoverX = hoverIndex === null ? null : left + hoverIndex * groupWidth + groupWidth / 2;
+  const tooltipWidth = 240;
+  const tooltipHeight = 42 + keys.length * 21;
+  const tooltipX = hoverX === null
+    ? 0
+    : hoverX + tooltipWidth + 18 > width - right
+      ? Math.max(left + 4, hoverX - tooltipWidth - 14)
+      : hoverX + 12;
+
+  const labelStep = rows.length <= 14 ? 1 : rows.length <= 31 ? 2 : Math.ceil(rows.length / 16);
+
+  return <div style={{ overflowX: "auto" }}>
+    <svg
+      viewBox={"0 0 " + width + " " + height}
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHoverIndex(null)}
+      style={{ width: "100%", minWidth: 860, background: "#ffffff", border: "1px solid #d1d5db", borderRadius: 12, cursor: "crosshair" }}
+    >
+      <rect x="0" y="0" width={width} height={height} fill="#ffffff" rx="12" />
+
+      <text
+        x="20"
+        y={top + plotHeight / 2}
+        transform={"rotate(-90 20 " + (top + plotHeight / 2) + ")"}
+        textAnchor="middle"
+        fontSize="12"
+        fontWeight="700"
+        fill="#374151"
+      >
+        Energia (kWh)
+      </text>
+
+      {[0, .25, .5, .75, 1].map((p) => {
+        const yy = top + p * plotHeight;
+        const value = yMax * (1 - p);
+        return <g key={p}>
+          <line x1={left} x2={width - right} y1={yy} y2={yy} stroke="#e5e7eb" />
+          <text x={left - 8} y={yy + 4} textAnchor="end" fill="#6b7280" fontSize="11">
+            {value.toFixed(value >= 10 ? 1 : 2)}
+          </text>
+        </g>;
+      })}
+
+      {rows.map((row, rowIndex) => {
+        const groupX = left + rowIndex * groupWidth + gap;
+        return <g key={row.key || row.label || rowIndex}>
+          {keys.map((key, keyIndex) => {
+            const value = Number(row[key] || 0);
+            const x = groupX + keyIndex * (barWidth + 1.5);
+            const yy = y(value);
+            return <rect
+              key={key}
+              x={x}
+              y={yy}
+              width={barWidth}
+              height={Math.max(0, top + plotHeight - yy)}
+              rx="1.5"
+              fill={colors[key]}
+            />;
+          })}
+          {(rowIndex % labelStep === 0 || rowIndex === rows.length - 1) && <text
+            x={left + rowIndex * groupWidth + groupWidth / 2}
+            y={top + plotHeight + 26}
+            textAnchor="middle"
+            fontSize="10.5"
+            fill="#4b5563"
+          >
+            {row.label}
+          </text>}
+        </g>;
+      })}
+
+      <line x1={left} x2={left} y1={top} y2={top + plotHeight} stroke="#111827" />
+      <line x1={left} x2={width - right} y1={top + plotHeight} y2={top + plotHeight} stroke="#111827" />
+
+      {keys.map((key, i) => <g key={"legend-" + key}>
+        <rect x={left + i * 125} y={height - 44} width="12" height="12" rx="2" fill={colors[key]} />
+        <text x={left + 18 + i * 125} y={height - 34} fontSize="11" fill="#374151">
+          {key.replace("Power", "").toUpperCase()}
+        </text>
+      </g>)}
+
+      {hover && hoverX !== null && <g pointerEvents="none">
+        <line x1={hoverX} x2={hoverX} y1={top} y2={top + plotHeight} stroke="#111827" strokeDasharray="4 4" opacity="0.45" />
+        <rect x={tooltipX} y={top + 12} width={tooltipWidth} height={tooltipHeight} rx="9" fill="#ffffff" stroke="#9ca3af" opacity="0.98" />
+        <text x={tooltipX + 12} y={top + 32} fill="#111827" fontSize="11" fontWeight="700">{hover.fullLabel || hover.label}</text>
+        {keys.map((key, i) => <g key={"tip-" + key}>
+          <circle cx={tooltipX + 14} cy={top + 54 + i * 21} r="3.5" fill={colors[key]} />
+          <text x={tooltipX + 24} y={top + 58 + i * 21} fill="#374151" fontSize="10.5">
+            {key.replace("Power", "").toUpperCase()}: {Number(hover[key] || 0).toFixed(3)} kWh
+          </text>
+        </g>)}
+      </g>}
+    </svg>
+  </div>;
+}
+
+function EnergyAggregationPanel() {
+  const now = new Date();
+  const currentYear = Number(
+    new Intl.DateTimeFormat("en", { timeZone: "America/Sao_Paulo", year: "numeric" }).format(now)
+  );
+  const currentMonth = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" });
+
+  const [mode, setMode] = useState("day");
+  const [day, setDay] = useState(todayBrazil());
+  const [month, setMonth] = useState(currentMonth);
+  const [year, setYear] = useState(String(currentYear));
+  const [cutStart, setCutStart] = useState("05:30");
+  const [cutEnd, setCutEnd] = useState("18:30");
+  const [selectedPVKeys, setSelectedPVKeys] = useState(["pv1Power","pv2Power","pv3Power","pv4Power"]);
+  const [rows, setRows] = useState([]);
+  const [status, setStatus] = useState("Selecione o período e clique em Carregar gráfico.");
+  const [loading, setLoading] = useState(false);
+
+  function togglePV(key) {
+    setSelectedPVKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    );
+  }
+
+  async function loadBars() {
+    if (analysisTimeToMinutes(cutEnd) <= analysisTimeToMinutes(cutStart)) {
+      setStatus("A hora final deve ser posterior à hora inicial.");
+      return;
+    }
+
+    setLoading(true);
+    setRows([]);
+
+    try {
+      if (mode === "day") {
+        setStatus("Carregando geração horária...");
+        const result = await fetchEnergyDayCached(day, cutStart, cutEnd);
+        const hourlyRows = (result.hourly || []).map((item) => ({
+          key: item.start,
+          label: item.label,
+          fullLabel: day.split("-").reverse().join("/") + " · " + item.label,
+          pv1Power: Number(item.pv1Power || 0),
+          pv2Power: Number(item.pv2Power || 0),
+          pv3Power: Number(item.pv3Power || 0),
+          pv4Power: Number(item.pv4Power || 0)
+        }));
+        setRows(hourlyRows);
+        setStatus(
+          hourlyRows.length
+            ? "Geração hora a hora em " + day.split("-").reverse().join("/") + ", considerando apenas " + cutStart + " a " + cutEnd + "."
+            : "Sem dados para o intervalo selecionado."
+        );
+        return;
+      }
+
+      const dates = mode === "month" ? dateListForMonth(month) : dateListForYear(year);
+      const today = todayIsoBrazil();
+      const usableDates = dates.filter((date) => date <= today);
+
+      if (!usableDates.length) {
+        setStatus("O período selecionado ainda não possui dias concluídos.");
+        return;
+      }
+
+      setStatus("Carregando 0 de " + usableDates.length + " dias...");
+
+      const daily = await mapWithConcurrency(
+        usableDates,
+        5,
+        async (date) => fetchEnergyDayCached(date, cutStart, cutEnd),
+        (done, total) => setStatus("Carregando " + done + " de " + total + " dias...")
+      );
+
+      if (mode === "month") {
+        const monthRows = daily.map((item, index) => ({
+          key: usableDates[index],
+          label: String(index + 1).padStart(2, "0"),
+          fullLabel: usableDates[index].split("-").reverse().join("/"),
+          pv1Power: item.ok === false ? 0 : Number(item.totals?.pv1Power || 0),
+          pv2Power: item.ok === false ? 0 : Number(item.totals?.pv2Power || 0),
+          pv3Power: item.ok === false ? 0 : Number(item.totals?.pv3Power || 0),
+          pv4Power: item.ok === false ? 0 : Number(item.totals?.pv4Power || 0)
+        }));
+        setRows(monthRows);
+        const failed = daily.filter((item) => item.ok === false).length;
+        setStatus(
+          "Geração diária de " + month + ", considerando somente " + cutStart + " a " + cutEnd +
+          (failed ? " · " + failed + " dia(s) sem resposta." : ".")
+        );
+        return;
+      }
+
+      const monthRows = Array.from({ length: 12 }, (_, i) => ({
+        key: String(i + 1).padStart(2, "0"),
+        label: ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"][i],
+        fullLabel: ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"][i] + " de " + year,
+        pv1Power: 0, pv2Power: 0, pv3Power: 0, pv4Power: 0
+      }));
+
+      daily.forEach((item, index) => {
+        if (item.ok === false) return;
+        const monthIndex = Number(usableDates[index].slice(5, 7)) - 1;
+        ["pv1Power","pv2Power","pv3Power","pv4Power"].forEach((key) => {
+          monthRows[monthIndex][key] += Number(item.totals?.[key] || 0);
+        });
+      });
+
+      setRows(monthRows);
+      const failed = daily.filter((item) => item.ok === false).length;
+      setStatus(
+        "Geração mensal de " + year + ", somando em cada dia apenas " + cutStart + " a " + cutEnd +
+        (failed ? " · " + failed + " dia(s) sem resposta." : ".")
+      );
+    } catch (error) {
+      setStatus("Erro ao carregar gráfico: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const totals = selectedPVKeys.map((key) => ({
+    key,
+    energy: rows.reduce((sum, row) => sum + Number(row[key] || 0), 0)
+  }));
+  const grandTotal = totals.reduce((sum, item) => sum + item.energy, 0);
+
+  return <section className="no-print" style={{
+    background: "linear-gradient(180deg,#17172a,#111122)",
+    border: "1px solid " + theme.border,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 18
+  }}>
+    <div>
+      <p style={{ margin: 0, color: theme.primaryLight, fontSize: 11, fontWeight: 800 }}>ENERGIA POR MÓDULO</p>
+      <h2 style={{ margin: "5px 0 6px", fontSize: 22 }}>Gráfico de barras da geração integrada</h2>
+      <p style={{ margin: 0, color: theme.muted, fontSize: 11 }}>
+        No modo dia, as barras mostram energia hora a hora. No modo mês, mostram dia a dia. No modo ano, mostram mês a mês.
+        O corte horário é aplicado separadamente a todos os dias antes da soma.
+      </p>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginTop: 14 }}>
+      <label style={{ fontSize: 11 }}>Visualização<br />
+        <select value={mode} onChange={(e) => setMode(e.target.value)} style={inputStyle}>
+          <option value="day">Dia · hora a hora</option>
+          <option value="month">Mês · dia a dia</option>
+          <option value="year">Ano · mês a mês</option>
+        </select>
+      </label>
+
+      {mode === "day" && <label style={{ fontSize: 11 }}>Data<br />
+        <input type="date" value={day} onChange={(e) => setDay(e.target.value)} style={inputStyle} />
+      </label>}
+
+      {mode === "month" && <label style={{ fontSize: 11 }}>Mês<br />
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={inputStyle} />
+      </label>}
+
+      {mode === "year" && <label style={{ fontSize: 11 }}>Ano<br />
+        <input type="number" min="2020" max={currentYear} value={year} onChange={(e) => setYear(e.target.value)} style={inputStyle} />
+      </label>}
+
+      <label style={{ fontSize: 11 }}>Corte inicial<br />
+        <input type="time" value={cutStart} onChange={(e) => setCutStart(e.target.value)} style={inputStyle} />
+      </label>
+
+      <label style={{ fontSize: 11 }}>Corte final<br />
+        <input type="time" value={cutEnd} onChange={(e) => setCutEnd(e.target.value)} style={inputStyle} />
+      </label>
+    </div>
+
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 12 }}>
+      <span style={{ color: theme.muted, fontSize: 11 }}>Módulos:</span>
+      {[
+        ["pv1Power","PV1"],
+        ["pv2Power","PV2"],
+        ["pv3Power","PV3"],
+        ["pv4Power","PV4"]
+      ].map(([key,label]) => {
+        const active = selectedPVKeys.includes(key);
+        return <button type="button" key={key} onClick={() => togglePV(key)} style={{
+          background: active ? theme.primary : "#111122",
+          color: active ? "#fff" : theme.text,
+          border: "1px solid " + (active ? theme.primaryLight : theme.border),
+          borderRadius: 999,
+          padding: "7px 12px",
+          fontWeight: 800,
+          cursor: "pointer",
+          fontSize: 11
+        }}>{label}</button>;
+      })}
+
+      <button type="button" onClick={loadBars} disabled={loading || !selectedPVKeys.length} style={primaryButton}>
+        {loading ? "Carregando..." : "Carregar gráfico"}
+      </button>
+    </div>
+
+    <p style={{ color: theme.muted, fontSize: 10.5, marginTop: 10 }}>{status}</p>
+
+    <EnergyBarChart rows={rows} selectedPVKeys={selectedPVKeys} />
+
+    {!!rows.length && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 9, marginTop: 12 }}>
+      {totals.map((item) => <div key={item.key} style={{
+        border: "1px solid " + theme.border, borderRadius: 10, padding: 10, background: "rgba(255,255,255,.025)"
+      }}>
+        <div style={{ color: theme.muted, fontSize: 10 }}>{item.key.replace("Power","").toUpperCase()} · total no recorte</div>
+        <div style={{ fontSize: 18, fontWeight: 800, marginTop: 3 }}>{item.energy.toFixed(3)} kWh</div>
+        <div style={{ color: theme.muted, fontSize: 10 }}>
+          {grandTotal > 0 ? ((item.energy / grandTotal) * 100).toFixed(1) + "% da soma dos módulos exibidos" : "-"}
+        </div>
+      </div>)}
+    </div>}
+
+    <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0, marginTop: 10 }}>
+      Exemplo: ao selecionar 11:00 a 15:00 em um mês, cada barra diária considera somente a energia integrada entre 11:00 e 15:00 daquele dia.
+      No modo anual, cada barra mensal é a soma desses mesmos recortes diários.
+    </p>
+  </section>;
+}
+
 export default function GraficosTemperatura() {
   const svgRef = useRef(null);
   const [date, setDate] = useState(todayBrazil());
@@ -1072,6 +1514,8 @@ export default function GraficosTemperatura() {
     </section>
 
     <IntegratedAnalysisPanel date={date} startTime={startTime} endTime={endTime} />
+
+    <EnergyAggregationPanel />
 
     <section className="print-area" style={{
       background: "#ffffff", border: "1px solid #d1d5db", borderRadius: 14,
