@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 const SUPABASE_URL = "https://hkomutmuonfntowvdgjc.supabase.co";
 const SAMPLE_INTERVAL_MINUTES = 5;
@@ -393,7 +393,6 @@ function TemperatureAnalysisChart({ rows, selectedKeys, analyses, mode }) {
   return (
     <div style={{ width: "100%", minWidth: 0, overflow: "hidden" }}>
       <svg
-        ref={svgRef}
         viewBox={"0 0 " + width + " " + height}
         preserveAspectRatio="xMidYMid meet"
         onMouseMove={handleMouseMove}
@@ -697,55 +696,6 @@ function timeToMinutes(value) {
   return (parts[0] || 0) * 60 + (parts[1] || 0);
 }
 
-function downloadDashboardSvg(source, baseName, format = "png") {
-  if (!source) return;
-  const clone = source.cloneNode(true);
-  clone.querySelectorAll('[data-export-ignore="true"]').forEach((node) => node.remove());
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-
-  const viewBox = (clone.getAttribute("viewBox") || "0 0 960 390").split(/\s+/).map(Number);
-  const width = Number.isFinite(viewBox[2]) ? viewBox[2] : 960;
-  const height = Number.isFinite(viewBox[3]) ? viewBox[3] : 390;
-  clone.setAttribute("width", width);
-  clone.setAttribute("height", height);
-
-  const serialized = new XMLSerializer().serializeToString(clone);
-  const blob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const safeName = String(baseName || "grafico_geracao")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "_");
-
-  if (format === "svg") {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = safeName + ".svg";
-    a.click();
-    URL.revokeObjectURL(url);
-    return;
-  }
-
-  const img = new Image();
-  img.onload = () => {
-    const scale = 2.5;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(width * scale);
-    canvas.height = Math.round(height * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.scale(scale, scale);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
-    URL.revokeObjectURL(url);
-
-    const a = document.createElement("a");
-    a.href = canvas.toDataURL("image/png");
-    a.download = safeName + ".png";
-    a.click();
-  };
-  img.src = url;
-}
-
 function integratePowerPoints(points, maxGapMinutes = 30) {
   const valid = [...(points || [])]
     .filter((p) => Number.isFinite(Number(p.value)) && Number.isFinite(Number(p.timestamp)))
@@ -761,9 +711,8 @@ function integratePowerPoints(points, maxGapMinutes = 30) {
   return energy;
 }
 
-function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys, date }) {
+function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys }) {
   const [hoverMinute, setHoverMinute] = useState(null);
-  const svgRef = useRef(null);
   const start = timeToMinutes(startTime);
   const end = timeToMinutes(endTime);
   const width = 960, height = 390, left = 58, right = 24, top = 28, bottom = 58;
@@ -896,7 +845,7 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
         })}
         {estimated.length > 1 && <path d={pathFor(estimated)} fill="none" stroke="#facc15" strokeWidth="2.4" strokeDasharray="8 6" strokeLinecap="round" />}
 
-        {hoverMinute !== null && hoverX !== null && <g pointerEvents="none" data-export-ignore="true">
+        {hoverMinute !== null && hoverX !== null && <g pointerEvents="none">
           <line
             x1={hoverX} x2={hoverX}
             y1={top} y2={top + plotHeight}
@@ -937,25 +886,6 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
     <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, color: theme.text, fontSize: 12 }}>
       {keys.map((key) => <span key={key}><b style={{ color: colors[key] }}>●</b> {key.replace("Power", "").toUpperCase()}</span>)}
       <span><b style={{ color: "#facc15" }}>●</b> Estimativa por irradiância INMET</span>
-    </div>
-
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-      <button type="button" onClick={() => downloadDashboardSvg(
-        svgRef.current,
-        "geracao_modulos_" + (date || "data") + "_" + startTime.replace(":", "") + "_" + endTime.replace(":", ""),
-        "png"
-      )} style={{
-        background: "#111122", color: theme.text, border: "1px solid " + theme.border,
-        borderRadius: 9, padding: "8px 11px", fontWeight: 700, cursor: "pointer", fontSize: 11
-      }}>Baixar PNG</button>
-      <button type="button" onClick={() => downloadDashboardSvg(
-        svgRef.current,
-        "geracao_modulos_" + (date || "data") + "_" + startTime.replace(":", "") + "_" + endTime.replace(":", ""),
-        "svg"
-      )} style={{
-        background: "#111122", color: theme.text, border: "1px solid " + theme.border,
-        borderRadius: 9, padding: "8px 11px", fontWeight: 700, cursor: "pointer", fontSize: 11
-      }}>Baixar SVG</button>
     </div>
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginTop: 14 }}>
@@ -1316,7 +1246,6 @@ export default function Dashboard() {
         startTime={solarStartTime}
         endTime={solarEndTime}
         selectedPVKeys={selectedPVKeys}
-        date={solarDate}
       />
       <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0 }}>
         A estimativa usa 610 W por módulo e irradiância global horizontal do INMET. Serve como referência comparativa e não substitui uma estimativa no plano do módulo.
