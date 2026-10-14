@@ -681,6 +681,133 @@ function buildCSV(rows) {
   return [headers.join(";"), ...body].join("\n");
 }
 
+
+function minutesFromIso(iso) {
+  const parts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(new Date(iso));
+  const h = Number(parts.find((p) => p.type === "hour")?.value || 0);
+  const m = Number(parts.find((p) => p.type === "minute")?.value || 0);
+  return h * 60 + m;
+}
+
+function timeToMinutes(value) {
+  const parts = String(value || "00:00").split(":").map(Number);
+  return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+
+function integratePowerPoints(points, maxGapMinutes = 30) {
+  const valid = [...(points || [])]
+    .filter((p) => Number.isFinite(Number(p.value)) && Number.isFinite(Number(p.timestamp)))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  let energy = 0;
+  for (let i = 1; i < valid.length; i += 1) {
+    const a = valid[i - 1];
+    const b = valid[i];
+    const dtHours = (b.timestamp - a.timestamp) / 3600000;
+    if (dtHours <= 0 || dtHours > maxGapMinutes / 60) continue;
+    energy += ((Number(a.value) + Number(b.value)) / 2) * dtHours;
+  }
+  return energy;
+}
+
+function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, showPV4 }) {
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  const width = 960, height = 390, left = 58, right = 24, top = 28, bottom = 58;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const colors = { pv1Power: "#a78bfa", pv2Power: "#38bdf8", pv3Power: "#22c55e", pv4Power: "#f97316" };
+
+  function clippedFox(key) {
+    const points = foxSeries?.[key]?.points || [];
+    return points.filter((p) => {
+      const min = minutesFromIso(p.time);
+      return min >= start && min <= end;
+    });
+  }
+
+  const keys = showPV4 ? ["pv1Power", "pv2Power", "pv3Power", "pv4Power"] : ["pv1Power", "pv2Power", "pv3Power"];
+  const estimated = (inmetRows || [])
+    .filter((r) => Number.isFinite(Number(r.estimatedModulePowerKw)))
+    .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.estimatedModulePowerKw) }))
+    .filter((p) => {
+      const min = minutesFromIso(p.time);
+      return min >= start && min <= end;
+    });
+
+  const allValues = [
+    ...keys.flatMap((key) => clippedFox(key).map((p) => Number(p.value))),
+    ...estimated.map((p) => Number(p.value))
+  ].filter((v) => Number.isFinite(v) && v >= 0);
+
+  if (end <= start) return <p style={{ color: theme.warning }}>A hora final deve ser posterior à hora inicial.</p>;
+  if (!allValues.length) return <p style={{ color: theme.muted }}>Ainda não há dados elétricos disponíveis para este intervalo.</p>;
+
+  const yMax = Math.max(0.1, Math.ceil(Math.max(...allValues) * 10) / 10);
+  const x = (iso) => left + ((minutesFromIso(iso) - start) / Math.max(1, end - start)) * plotWidth;
+  const y = (value) => top + ((yMax - Number(value)) / yMax) * plotHeight;
+
+  function pathFor(points) {
+    const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp);
+    return sorted.map((p, i) => (i ? "L " : "M ") + x(p.time) + " " + y(p.value)).join(" ");
+  }
+
+  const moduleEnergies = keys.map((key) => ({ key, energy: integratePowerPoints(clippedFox(key), 30) }));
+  const totalEnergy = moduleEnergies.reduce((sum, item) => sum + item.energy, 0);
+  const estimatedEnergy = integratePowerPoints(estimated, 90);
+
+  return <div>
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={"0 0 " + width + " " + height} style={{
+        width: "100%", minWidth: 720, background: "linear-gradient(180deg,#111122,#0b0b14)",
+        border: "1px solid " + theme.border, borderRadius: 16
+      }}>
+        {[0, .25, .5, .75, 1].map((p) => {
+          const yy = top + p * plotHeight;
+          const label = (yMax * (1 - p)).toFixed(2);
+          return <g key={p}>
+            <line x1={left} y1={yy} x2={width - right} y2={yy} stroke="#2a2148" />
+            <text x={8} y={yy + 4} fill={theme.muted} fontSize="11">{label} kW</text>
+          </g>;
+        })}
+        {Array.from({ length: 7 }, (_, i) => {
+          const min = start + ((end - start) * i) / 6;
+          const hh = String(Math.floor(min / 60)).padStart(2, "0");
+          const mm = String(Math.round(min % 60)).padStart(2, "0");
+          const xx = left + (i * plotWidth) / 6;
+          return <text key={i} x={xx} y={height - 18} textAnchor="middle" fill={theme.muted} fontSize="11">{hh}:{mm}</text>;
+        })}
+        {keys.map((key) => {
+          const pts = clippedFox(key);
+          return pts.length > 1 ? <path key={key} d={pathFor(pts)} fill="none" stroke={colors[key]} strokeWidth="2.7" strokeLinecap="round" strokeLinejoin="round" /> : null;
+        })}
+        {estimated.length > 1 && <path d={pathFor(estimated)} fill="none" stroke="#facc15" strokeWidth="2.4" strokeDasharray="8 6" strokeLinecap="round" />}
+      </svg>
+    </div>
+
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, color: theme.text, fontSize: 12 }}>
+      {keys.map((key) => <span key={key}><b style={{ color: colors[key] }}>●</b> {key.replace("Power", "").toUpperCase()}</span>)}
+      <span><b style={{ color: "#facc15" }}>●</b> Estimativa por irradiância INMET</span>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginTop: 14 }}>
+      {moduleEnergies.map(({ key, energy }) => <div key={key} style={{ border: "1px solid " + theme.border, borderRadius: 12, padding: 11, background: "rgba(255,255,255,.035)" }}>
+        <div style={{ color: theme.muted, fontSize: 11 }}>{key.replace("Power", "").toUpperCase()} no intervalo</div>
+        <div style={{ fontWeight: 800, fontSize: 18, marginTop: 4 }}>{energy.toFixed(3)} kWh</div>
+        <div style={{ color: theme.muted, fontSize: 10, marginTop: 3 }}>
+          {totalEnergy > 0 ? ((energy / totalEnergy) * 100).toFixed(1) + "% da energia dos módulos exibidos" : "-"}
+        </div>
+      </div>)}
+      <div style={{ border: "1px solid " + theme.border, borderRadius: 12, padding: 11, background: "rgba(250,204,21,.06)" }}>
+        <div style={{ color: theme.muted, fontSize: 11 }}>Estimativa INMET por módulo</div>
+        <div style={{ fontWeight: 800, fontSize: 18, marginTop: 4 }}>{estimatedEnergy.toFixed(3)} kWh</div>
+        <div style={{ color: theme.muted, fontSize: 10, marginTop: 3 }}>Referência simples por radiação global horizontal</div>
+      </div>
+    </div>
+  </div>;
+}
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
@@ -692,6 +819,12 @@ export default function Dashboard() {
   const [chartDate, setChartDate] = useState(todayBrazil());
   const [selectedSensors, setSelectedSensors] = useState(["temp_sensor1"]);
   const [viewMode, setViewMode] = useState("treated");
+  const [foxSeries, setFoxSeries] = useState({});
+  const [inmetRows, setInmetRows] = useState([]);
+  const [solarStartTime, setSolarStartTime] = useState("05:30");
+  const [solarEndTime, setSolarEndTime] = useState("18:30");
+  const [showPV4, setShowPV4] = useState(false);
+  const [solarMessage, setSolarMessage] = useState("Carregando dados elétricos...");
 
   async function loadData() {
     try {
@@ -721,6 +854,30 @@ export default function Dashboard() {
     const timer = setInterval(loadData, 5000);
     return () => clearInterval(timer);
   }, [chartDate]);
+
+  async function loadSolarData() {
+    const today = todayBrazil();
+    try {
+      const [foxResponse, inmetResponse] = await Promise.all([
+        fetch("/api/history?source=foxess-history&date=" + today + "&startTime=05:00&endTime=19:30").then((r) => r.json()),
+        fetch("/api/history?source=inmet&date=" + today + "&modulePowerW=610").then((r) => r.json())
+      ]);
+      if (foxResponse.ok) setFoxSeries(foxResponse.series || {});
+      if (inmetResponse.ok) setInmetRows(inmetResponse.rows || []);
+      const messages = [];
+      if (!foxResponse.ok) messages.push("FoxESS: " + (foxResponse.message || foxResponse.error || "sem dados"));
+      if (!inmetResponse.ok) messages.push("INMET: " + (inmetResponse.detail || inmetResponse.error || "sem dados"));
+      setSolarMessage(messages.length ? messages.join(" · ") : "FoxESS e INMET atualizados.");
+    } catch (error) {
+      setSolarMessage("Falha ao atualizar dados elétricos: " + error.message);
+    }
+  }
+
+  useEffect(() => {
+    loadSolarData();
+    const timer = setInterval(loadSolarData, 300000);
+    return () => clearInterval(timer);
+  }, []);
 
   function toggleSensor(key) {
     setSelectedSensors((current) =>
@@ -822,10 +979,10 @@ export default function Dashboard() {
         <div>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Sistema IoT de monitoramento fotovoltaico</p>
-            <span style={{ border: "1px solid " + theme.primaryLight, color: theme.primaryLight, borderRadius: 999, padding: "4px 9px", fontSize: 10, fontWeight: 800 }}>VERSÃO EXPERIMENTAL</span>
+            <span style={{ border: "1px solid " + theme.primaryLight, color: theme.primaryLight, borderRadius: 999, padding: "4px 9px", fontSize: 10, fontWeight: 800 }}>VERSÃO OFICIAL</span>
           </div>
           <h1 style={{ margin: "8px 0", fontSize: 36 }}>Monitoramento Fotovoltaico</h1>
-          <p style={{ margin: 0, color: theme.muted }}>Temperaturas, imagens, nuvem e controle remoto do experimento.</p>
+          <p style={{ margin: 0, color: theme.muted }}>Monitoramento térmico, elétrico, meteorológico e visual do experimento.</p>
         </div>
         <a href="/graficos" style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -926,6 +1083,42 @@ export default function Dashboard() {
           <IntegrityPanel selectedSensors={selectedSensorObjects} analyses={selectedDayAnalyses} date={chartDate} />
         </div>
       </div>
+    </Card>
+
+    <br />
+
+    <Card
+      title="Geração fotovoltaica em tempo real"
+      subtitle="PV1, PV2 e PV3 comparados com uma referência estimada a partir da irradiância da estação INMET A514. PV4 pode ser incluído quando necessário."
+    >
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 12 }}>
+        <label style={{ color: theme.muted, fontSize: 11 }}>Hora inicial<br />
+          <input type="time" value={solarStartTime} onChange={(e) => setSolarStartTime(e.target.value)} style={{
+            marginTop: 4, background: "#0f1020", color: theme.text, border: "1px solid " + theme.border, borderRadius: 9, padding: 8
+          }} />
+        </label>
+        <label style={{ color: theme.muted, fontSize: 11 }}>Hora final<br />
+          <input type="time" value={solarEndTime} onChange={(e) => setSolarEndTime(e.target.value)} style={{
+            marginTop: 4, background: "#0f1020", color: theme.text, border: "1px solid " + theme.border, borderRadius: 9, padding: 8
+          }} />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.text, fontSize: 11, paddingBottom: 8 }}>
+          <input type="checkbox" checked={showPV4} onChange={(e) => setShowPV4(e.target.checked)} />
+          Incluir PV4
+        </label>
+        <Button onClick={loadSolarData} color={theme.ok}>Atualizar geração</Button>
+      </div>
+      <p style={{ color: theme.muted, fontSize: 10, marginTop: -4 }}>{solarMessage}</p>
+      <SolarGenerationChart
+        foxSeries={foxSeries}
+        inmetRows={inmetRows}
+        startTime={solarStartTime}
+        endTime={solarEndTime}
+        showPV4={showPV4}
+      />
+      <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0 }}>
+        A estimativa usa 610 W por módulo e irradiância global horizontal do INMET. Serve como referência comparativa e não substitui uma estimativa no plano do módulo.
+      </p>
     </Card>
 
     <br />
