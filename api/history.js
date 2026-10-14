@@ -57,12 +57,27 @@ function normalizeFoxTime(value) {
     const ms = value < 100000000000 ? value * 1000 : value;
     return Number.isFinite(ms) ? ms : null;
   }
-  const n = Number(value);
-  if (Number.isFinite(n) && String(value).trim() !== "") {
-    const ms = n < 100000000000 ? n * 1000 : n;
-    return ms;
+
+  const text = String(value).trim();
+  const n = Number(text);
+  if (Number.isFinite(n) && text !== "") {
+    return n < 100000000000 ? n * 1000 : n;
   }
-  const parsed = Date.parse(value);
+
+  // FoxESS history usually returns local device time like "YYYY-MM-DD HH:mm:ss".
+  // Treat bare timestamps as America/Sao_Paulo (-03:00) instead of Vercel UTC.
+  const bare = text.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/);
+  if (bare) {
+    const parsed = Date.parse(bare[1] + "T" + bare[2] + "-03:00");
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // Also accept strings like "2026-10-14 08:53:30 BRT-0300".
+  const cleaned = text
+    .replace(" BRT", "")
+    .replace(/([+-]\d{2})(\d{2})$/, "$1:$2")
+    .replace(" ", "T");
+  const parsed = Date.parse(cleaned);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -91,15 +106,30 @@ function normalizeFoxPoint(point) {
 
 function normalizeFoxHistory(result) {
   const device = Array.isArray(result) ? result[0] : result;
-  const datas = Array.isArray(device?.datas) ? device.datas : [];
+  const datas = Array.isArray(device?.datas)
+    ? device.datas
+    : Array.isArray(result?.datas)
+      ? result.datas
+      : Array.isArray(result)
+        ? result.filter((item) => item && (item.variable || item.name))
+        : [];
+
   const series = {};
 
   datas.forEach((entry) => {
     const variable = entry.variable || entry.name;
     if (!variable) return;
-    const points = Array.isArray(entry.data)
-      ? entry.data.map(normalizeFoxPoint).filter(Boolean).sort((a,b) => a.timestamp - b.timestamp)
-      : [];
+    const rawPoints = Array.isArray(entry.data)
+      ? entry.data
+      : Array.isArray(entry.points)
+        ? entry.points
+        : [];
+
+    const points = rawPoints
+      .map(normalizeFoxPoint)
+      .filter(Boolean)
+      .sort((a,b) => a.timestamp - b.timestamp);
+
     series[variable] = {
       variable,
       name: entry.name || variable,
@@ -108,7 +138,12 @@ function normalizeFoxHistory(result) {
     };
   });
 
-  return { deviceSN: device?.deviceSN || null, series };
+  return {
+    deviceSN: device?.deviceSN || device?.sn || null,
+    series,
+    pointCount: Object.values(series).reduce((sum, item) => sum + item.points.length, 0),
+    returnedVariables: Object.keys(series),
+  };
 }
 
 function brazilDayRange(date, startTime = "00:00", endTime = "23:59") {
@@ -176,14 +211,30 @@ async function handleFoxessHistory(req, res) {
 
   const startTime = req.query.startTime || "05:00";
   const endTime = req.query.endTime || "19:30";
-  const { begin, end } = brazilDayRange(date, startTime, endTime);
+  const requested = brazilDayRange(date, startTime, endTime);
+  const now = Date.now();
+  const begin = requested.begin;
+  const end = Math.min(requested.end, now);
   const path = "/op/v0/device/history/query";
-  const fox = await foxessPost(path, token, {
-    sn,
-    variables: FOXESS_VARIABLES,
-    begin,
-    end,
-  });
+
+  if (end <= begin) {
+    return res.status(200).json({
+      ok: true,
+      endpoint: path,
+      date,
+      startTime,
+      endTime,
+      deviceSN: sn,
+      series: {},
+      pointCount: 0,
+      returnedVariables: [],
+      note: "O intervalo solicitado ainda não possui dados concluídos.",
+    });
+  }
+
+  // variables is intentionally omitted. FoxESS OpenAPI returns all variables available
+  // for this device and avoids one unsupported key invalidating a historical query.
+  const fox = await foxessPost(path, token, { sn, begin, end });
 
   if (!fox.ok || (fox.data?.errno !== undefined && fox.data.errno !== 0)) {
     return res.status(502).json({
@@ -203,6 +254,8 @@ async function handleFoxessHistory(req, res) {
     startTime,
     endTime,
     deviceSN: normalized.deviceSN || sn,
+    pointCount: normalized.pointCount,
+    returnedVariables: normalized.returnedVariables,
     series: normalized.series,
   });
 }
@@ -225,41 +278,41 @@ function inmetUtcTimestamp(row) {
 }
 
 async function fetchInmetDay(date) {
-  const urls = [
-    "https://apitempo.inmet.gov.br/estacao/" + date + "/" + date + "/" + INMET_STATION,
-    "https://apitempo.inmet.gov.br/estacao/dados/" + date,
-  ];
-
-  let lastError = null;
-
-  for (let index = 0; index < urls.length; index += 1) {
-    try {
-      const response = await fetch(urls[index], {
-        headers: { "User-Agent": "Solarneo-UFSJ-PV-Monitor/1.0" },
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        lastError = "HTTP " + response.status;
-        continue;
-      }
-      const text = await response.text();
-      if (!text) {
-        lastError = "Resposta vazia";
-        continue;
-      }
-      const json = JSON.parse(text);
-      const rows = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
-      const filtered = index === 1
-        ? rows.filter((row) => String(row.CD_ESTACAO || row.codigo || "").toUpperCase() === INMET_STATION)
-        : rows;
-      if (filtered.length) return filtered;
-      lastError = "Sem registros da estação " + INMET_STATION;
-    } catch (error) {
-      lastError = error.message;
-    }
+  const token = process.env.INMET_TOKEN;
+  if (!token) {
+    const error = new Error("O endpoint horário atual do INMET exige token de acesso.");
+    error.code = "INMET_TOKEN_REQUIRED";
+    throw error;
   }
 
-  throw new Error(lastError || "Falha ao consultar INMET.");
+  const url =
+    "https://apitempo.inmet.gov.br/token/estacao/" +
+    date + "/" + date + "/" + INMET_STATION + "/" + encodeURIComponent(token);
+
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Solarneo-UFSJ-PV-Monitor/1.0" },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error("HTTP " + response.status);
+  }
+  if (!text || text.trim() === "") {
+    throw new Error("Resposta vazia do INMET.");
+  }
+  if (text.includes("CHAVE INVÁLIDA")) {
+    const error = new Error("Token INMET inválido.");
+    error.code = "INMET_TOKEN_INVALID";
+    throw error;
+  }
+
+  const json = JSON.parse(text);
+  const rows = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
+  return rows.filter((row) =>
+    !row.CD_ESTACAO || String(row.CD_ESTACAO).toUpperCase() === INMET_STATION
+  );
 }
 
 async function handleInmet(req, res) {
@@ -300,9 +353,10 @@ async function handleInmet(req, res) {
       rows,
     });
   } catch (error) {
-    return res.status(502).json({
+    const tokenIssue = error.code === "INMET_TOKEN_REQUIRED" || error.code === "INMET_TOKEN_INVALID";
+    return res.status(tokenIssue ? 424 : 502).json({
       ok: false,
-      error: "inmet_failed",
+      error: tokenIssue ? "inmet_token_required" : "inmet_failed",
       detail: error.message,
       station: INMET_STATION,
     });
