@@ -711,7 +711,7 @@ function integratePowerPoints(points, maxGapMinutes = 30) {
   return energy;
 }
 
-function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, showPV4 }) {
+function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys }) {
   const start = timeToMinutes(startTime);
   const end = timeToMinutes(endTime);
   const width = 960, height = 390, left = 58, right = 24, top = 28, bottom = 58;
@@ -727,7 +727,7 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, showPV
     });
   }
 
-  const keys = showPV4 ? ["pv1Power", "pv2Power", "pv3Power", "pv4Power"] : ["pv1Power", "pv2Power", "pv3Power"];
+  const keys = selectedPVKeys || [];
   const estimated = (inmetRows || [])
     .filter((r) => Number.isFinite(Number(r.estimatedModulePowerKw)))
     .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.estimatedModulePowerKw) }))
@@ -742,7 +742,8 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, showPV
   ].filter((v) => Number.isFinite(v) && v >= 0);
 
   if (end <= start) return <p style={{ color: theme.warning }}>A hora final deve ser posterior à hora inicial.</p>;
-  if (!allValues.length) return <p style={{ color: theme.muted }}>Ainda não há dados elétricos disponíveis para este intervalo.</p>;
+  if (!keys.length) return <p style={{ color: theme.warning }}>Selecione pelo menos um PV para exibir.</p>;
+  if (!allValues.length) return <p style={{ color: theme.muted }}>Ainda não há dados elétricos disponíveis para esta data e intervalo.</p>;
 
   const yMax = Math.max(0.1, Math.ceil(Math.max(...allValues) * 10) / 10);
   const x = (iso) => left + ((minutesFromIso(iso) - start) / Math.max(1, end - start)) * plotWidth;
@@ -821,9 +822,10 @@ export default function Dashboard() {
   const [viewMode, setViewMode] = useState("treated");
   const [foxSeries, setFoxSeries] = useState({});
   const [inmetRows, setInmetRows] = useState([]);
+  const [solarDate, setSolarDate] = useState(todayBrazil());
   const [solarStartTime, setSolarStartTime] = useState("05:30");
   const [solarEndTime, setSolarEndTime] = useState("18:30");
-  const [showPV4, setShowPV4] = useState(false);
+  const [selectedPVKeys, setSelectedPVKeys] = useState(["pv1Power", "pv2Power", "pv3Power"]);
   const [solarMessage, setSolarMessage] = useState("Carregando dados elétricos...");
 
   async function loadData() {
@@ -856,18 +858,24 @@ export default function Dashboard() {
   }, [chartDate]);
 
   async function loadSolarData() {
-    const today = todayBrazil();
+    setSolarMessage("Carregando geração de " + solarDate + "...");
+    setFoxSeries({});
+    setInmetRows([]);
     try {
       const [foxResponse, inmetResponse] = await Promise.all([
-        fetch("/api/history?source=foxess-history&date=" + today + "&startTime=05:00&endTime=19:30").then((r) => r.json()),
-        fetch("/api/history?source=inmet&date=" + today + "&modulePowerW=610").then((r) => r.json())
+        fetch("/api/history?source=foxess-history&date=" + solarDate + "&startTime=05:00&endTime=19:30").then((r) => r.json()),
+        fetch("/api/history?source=inmet&date=" + solarDate + "&modulePowerW=610").then((r) => r.json())
       ]);
       if (foxResponse.ok) setFoxSeries(foxResponse.series || {});
       if (inmetResponse.ok) setInmetRows(inmetResponse.rows || []);
       const messages = [];
       if (!foxResponse.ok) messages.push("FoxESS: " + (foxResponse.message || foxResponse.error || "sem dados"));
+      else if (!foxResponse.pointCount) messages.push("FoxESS: sem pontos históricos nesta data");
       if (!inmetResponse.ok) messages.push("INMET: " + (inmetResponse.detail || inmetResponse.error || "sem dados"));
-      setSolarMessage(messages.length ? messages.join(" · ") : "FoxESS e INMET atualizados.");
+      const suffix = foxResponse.ok && foxResponse.pointCount
+        ? "FoxESS: " + foxResponse.pointCount + " pontos"
+        : "";
+      setSolarMessage(messages.length ? messages.join(" · ") + (suffix ? " · " + suffix : "") : "Dados de " + solarDate + " atualizados · " + suffix);
     } catch (error) {
       setSolarMessage("Falha ao atualizar dados elétricos: " + error.message);
     }
@@ -875,9 +883,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadSolarData();
+    if (solarDate !== todayBrazil()) return undefined;
     const timer = setInterval(loadSolarData, 300000);
     return () => clearInterval(timer);
-  }, []);
+  }, [solarDate]);
+
+  function togglePV(key) {
+    setSelectedPVKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    );
+  }
 
   function toggleSensor(key) {
     setSelectedSensors((current) =>
@@ -1088,10 +1103,15 @@ export default function Dashboard() {
     <br />
 
     <Card
-      title="Geração fotovoltaica em tempo real"
-      subtitle="PV1, PV2 e PV3 comparados com uma referência estimada a partir da irradiância da estação INMET A514. PV4 pode ser incluído quando necessário."
+      title="Geração fotovoltaica"
+      subtitle="Selecione a data, o intervalo de horário e quais entradas PV deseja comparar. A curva INMET aparece quando os dados meteorológicos estiverem disponíveis."
     >
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 10 }}>
+        <label style={{ color: theme.muted, fontSize: 11 }}>Data<br />
+          <input type="date" value={solarDate} onChange={(e) => setSolarDate(e.target.value)} style={{
+            marginTop: 4, background: "#0f1020", color: theme.text, border: "1px solid " + theme.border, borderRadius: 9, padding: 8
+          }} />
+        </label>
         <label style={{ color: theme.muted, fontSize: 11 }}>Hora inicial<br />
           <input type="time" value={solarStartTime} onChange={(e) => setSolarStartTime(e.target.value)} style={{
             marginTop: 4, background: "#0f1020", color: theme.text, border: "1px solid " + theme.border, borderRadius: 9, padding: 8
@@ -1102,19 +1122,34 @@ export default function Dashboard() {
             marginTop: 4, background: "#0f1020", color: theme.text, border: "1px solid " + theme.border, borderRadius: 9, padding: 8
           }} />
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.text, fontSize: 11, paddingBottom: 8 }}>
-          <input type="checkbox" checked={showPV4} onChange={(e) => setShowPV4(e.target.checked)} />
-          Incluir PV4
-        </label>
         <Button onClick={loadSolarData} color={theme.ok}>Atualizar geração</Button>
       </div>
-      <p style={{ color: theme.muted, fontSize: 10, marginTop: -4 }}>{solarMessage}</p>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ color: theme.muted, fontSize: 11 }}>Entradas exibidas:</span>
+        {[
+          ["pv1Power", "PV1"],
+          ["pv2Power", "PV2"],
+          ["pv3Power", "PV3"],
+          ["pv4Power", "PV4"]
+        ].map(([key, label]) => {
+          const active = selectedPVKeys.includes(key);
+          return <button key={key} type="button" onClick={() => togglePV(key)} style={{
+            background: active ? theme.primary : "#111122",
+            color: active ? "white" : theme.text,
+            border: "1px solid " + (active ? theme.primaryLight : theme.border),
+            borderRadius: 999, padding: "7px 12px", fontWeight: 800, cursor: "pointer", fontSize: 11
+          }}>{label}</button>;
+        })}
+      </div>
+
+      <p style={{ color: theme.muted, fontSize: 10, marginTop: -2 }}>{solarMessage}</p>
       <SolarGenerationChart
         foxSeries={foxSeries}
         inmetRows={inmetRows}
         startTime={solarStartTime}
         endTime={solarEndTime}
-        showPV4={showPV4}
+        selectedPVKeys={selectedPVKeys}
       />
       <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0 }}>
         A estimativa usa 610 W por módulo e irradiância global horizontal do INMET. Serve como referência comparativa e não substitui uma estimativa no plano do módulo.
