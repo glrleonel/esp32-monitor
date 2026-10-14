@@ -260,6 +260,137 @@ async function handleFoxessHistory(req, res) {
   });
 }
 
+
+function localDateTimeMs(date, hhmm) {
+  return new Date(date + "T" + hhmm + ":00-03:00").getTime();
+}
+
+function interpolateValue(a, b, timestamp) {
+  if (b.timestamp === a.timestamp) return Number(a.value);
+  const ratio = (timestamp - a.timestamp) / (b.timestamp - a.timestamp);
+  return Number(a.value) + (Number(b.value) - Number(a.value)) * ratio;
+}
+
+function integrateSeriesWindow(points, rangeStart, rangeEnd, maxGapMinutes = 30) {
+  const src = [...(points || [])]
+    .filter((p) => Number.isFinite(Number(p.timestamp)) && Number.isFinite(Number(p.value)))
+    .sort((a,b) => a.timestamp - b.timestamp);
+
+  let energy = 0;
+  let coveredMs = 0;
+
+  for (let i = 1; i < src.length; i += 1) {
+    const a = src[i - 1];
+    const b = src[i];
+    const gap = b.timestamp - a.timestamp;
+    if (gap <= 0 || gap > maxGapMinutes * 60000) continue;
+
+    const segStart = Math.max(a.timestamp, rangeStart);
+    const segEnd = Math.min(b.timestamp, rangeEnd);
+    if (segEnd <= segStart) continue;
+
+    const vStart = interpolateValue(a, b, segStart);
+    const vEnd = interpolateValue(a, b, segEnd);
+    const hours = (segEnd - segStart) / 3600000;
+    energy += ((vStart + vEnd) / 2) * hours;
+    coveredMs += segEnd - segStart;
+  }
+
+  return { energy, coveredMinutes: coveredMs / 60000 };
+}
+
+async function handleFoxessEnergyDay(req, res) {
+  const token = process.env.FOXESS_TOKEN;
+  const sn = process.env.FOXESS_DEVICE_SN;
+  const date = req.query.date;
+  const startTime = req.query.startTime || "05:30";
+  const endTime = req.query.endTime || "18:30";
+
+  if (!token || !sn) {
+    return res.status(500).json({ ok: false, error: "FoxESS não configurado." });
+  }
+  if (!date) {
+    return res.status(400).json({ ok: false, error: "Informe date=AAAA-MM-DD." });
+  }
+
+  const windowStart = localDateTimeMs(date, startTime);
+  const requestedEnd = localDateTimeMs(date, endTime);
+  const windowEnd = Math.min(requestedEnd, Date.now());
+
+  if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd) || windowEnd <= windowStart) {
+    return res.status(200).json({
+      ok: true,
+      date,
+      startTime,
+      endTime,
+      totals: { pv1Power: 0, pv2Power: 0, pv3Power: 0, pv4Power: 0 },
+      hourly: [],
+      pointCount: 0,
+      note: "Intervalo sem dados concluídos."
+    });
+  }
+
+  const path = "/op/v0/device/history/query";
+  const fox = await foxessPost(path, token, {
+    sn,
+    variables: ["pv1Power","pv2Power","pv3Power","pv4Power"],
+    begin: windowStart,
+    end: windowEnd,
+  });
+
+  if (!fox.ok || (fox.data?.errno !== undefined && fox.data.errno !== 0)) {
+    return res.status(502).json({
+      ok: false,
+      error: "foxess_energy_day_failed",
+      errno: fox.data?.errno ?? null,
+      message: fox.data?.msg ?? null,
+    });
+  }
+
+  const normalized = normalizeFoxHistory(fox.data?.result ?? null);
+  const keys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
+  const totals = {};
+  keys.forEach((key) => {
+    totals[key] = integrateSeriesWindow(normalized.series[key]?.points || [], windowStart, windowEnd, 30).energy;
+  });
+
+  const hourly = [];
+  let cursor = windowStart;
+  while (cursor < windowEnd) {
+    const local = new Date(cursor - 3 * 3600000);
+    const nextHourLocalUtc = Date.UTC(
+      local.getUTCFullYear(),
+      local.getUTCMonth(),
+      local.getUTCDate(),
+      local.getUTCHours() + 1,
+      0, 0, 0
+    );
+    const nextHour = nextHourLocalUtc + 3 * 3600000;
+    const bucketEnd = Math.min(nextHour, windowEnd);
+    const row = {
+      start: cursor,
+      end: bucketEnd,
+      label: String(local.getUTCHours()).padStart(2, "0") + ":00",
+    };
+    keys.forEach((key) => {
+      row[key] = integrateSeriesWindow(normalized.series[key]?.points || [], cursor, bucketEnd, 30).energy;
+    });
+    hourly.push(row);
+    cursor = bucketEnd;
+  }
+
+  return res.status(200).json({
+    ok: true,
+    date,
+    startTime,
+    endTime,
+    deviceSN: normalized.deviceSN || sn,
+    pointCount: normalized.pointCount,
+    totals,
+    hourly,
+  });
+}
+
 function parseNumber(v) {
   if (v === null || v === undefined || v === "" || v === "9999") return null;
   const n = Number(String(v).replace(",", "."));
@@ -372,6 +503,9 @@ module.exports = async function handler(req, res) {
     }
     if (source === "foxess-history") {
       return await handleFoxessHistory(req, res);
+    }
+    if (source === "foxess-energy-day") {
+      return await handleFoxessEnergyDay(req, res);
     }
     if (source === "inmet") {
       return await handleInmet(req, res);
