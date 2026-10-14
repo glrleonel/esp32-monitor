@@ -60,6 +60,53 @@ function sanitizeFileName(v) {
     .replace(/^_+|_+$/g, "")
     .slice(0, 80) || "grafico_temperaturas";
 }
+
+function downloadSvgGraphic(source, baseName, format = "png") {
+  if (!source) return;
+  const clone = source.cloneNode(true);
+  clone.querySelectorAll('[data-export-ignore="true"]').forEach((node) => node.remove());
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+  const viewBox = (clone.getAttribute("viewBox") || "0 0 1200 700").split(/\s+/).map(Number);
+  const width = Number.isFinite(viewBox[2]) ? viewBox[2] : 1200;
+  const height = Number.isFinite(viewBox[3]) ? viewBox[3] : 700;
+  clone.setAttribute("width", width);
+  clone.setAttribute("height", height);
+
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svgBlob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
+  const svgUrl = URL.createObjectURL(svgBlob);
+  const safeName = sanitizeFileName(baseName || "grafico");
+
+  if (format === "svg") {
+    const a = document.createElement("a");
+    a.href = svgUrl;
+    a.download = safeName + ".svg";
+    a.click();
+    URL.revokeObjectURL(svgUrl);
+    return;
+  }
+
+  const img = new Image();
+  img.onload = () => {
+    const scale = 2.5;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    URL.revokeObjectURL(svgUrl);
+
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = safeName + ".png";
+    a.click();
+  };
+  img.src = svgUrl;
+}
 function formatNumber(v) {
   return Number(v).toFixed(1).replace(".", ",");
 }
@@ -221,8 +268,9 @@ function seriesStats(points) {
   };
 }
 
-function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode }) {
+function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode, date }) {
   const [hoverMinute, setHoverMinute] = useState(null);
+  const svgRef = useRef(null);
   const width = 1100, height = 500, left = 92, right = 28, top = 34, bottom = 82;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
@@ -370,6 +418,7 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
 
   return <div style={{ overflowX: "auto" }}>
     <svg
+      ref={svgRef}
       viewBox={"0 0 " + width + " " + height}
       onMouseMove={handleAnalysisMouseMove}
       onMouseLeave={() => setHoverMinute(null)}
@@ -421,7 +470,7 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
         </g>;
       })}
 
-      {hoverMinute !== null && hoverX !== null && <g pointerEvents="none">
+      {hoverMinute !== null && hoverX !== null && <g pointerEvents="none" data-export-ignore="true">
         <line
           x1={hoverX} x2={hoverX}
           y1={top} y2={top + plotHeight}
@@ -461,6 +510,18 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
         })}
       </g>}
     </svg>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
+      <button type="button" onClick={() => downloadSvgGraphic(
+        svgRef.current,
+        "analise_integrada_" + (date || "data") + "_" + startTime.replace(":", "") + "_" + endTime.replace(":", ""),
+        "png"
+      )} style={secondaryButton}>Baixar PNG</button>
+      <button type="button" onClick={() => downloadSvgGraphic(
+        svgRef.current,
+        "analise_integrada_" + (date || "data") + "_" + startTime.replace(":", "") + "_" + endTime.replace(":", ""),
+        "svg"
+      )} style={secondaryButton}>Baixar SVG</button>
+    </div>
   </div>;
 }
 
@@ -644,7 +705,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
     </p>
 
     <div style={{ marginTop: 14 }}>
-      <AnalysisLineChart seriesMap={seriesMap} selected={selected} startTime={startTime} endTime={endTime} scaleMode={scaleMode} />
+      <AnalysisLineChart seriesMap={seriesMap} selected={selected} startTime={startTime} endTime={endTime} scaleMode={scaleMode} date={date} />
     </div>
 
     <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 9 }}>
@@ -789,8 +850,9 @@ async function mapWithConcurrency(items, concurrency, worker, onProgress) {
   return results;
 }
 
-function EnergyBarChart({ rows, selectedPVKeys }) {
+function EnergyBarChart({ rows, selectedPVKeys, fileName }) {
   const [hoverIndex, setHoverIndex] = useState(null);
+  const svgRef = useRef(null);
   const keys = selectedPVKeys || [];
   const colors = {
     pv1Power: "#7c3aed",
@@ -842,6 +904,7 @@ function EnergyBarChart({ rows, selectedPVKeys }) {
 
   return <div style={{ overflowX: "auto" }}>
     <svg
+      ref={svgRef}
       viewBox={"0 0 " + width + " " + height}
       onMouseMove={handleMove}
       onMouseLeave={() => setHoverIndex(null)}
@@ -911,7 +974,7 @@ function EnergyBarChart({ rows, selectedPVKeys }) {
         </text>
       </g>)}
 
-      {hover && hoverX !== null && <g pointerEvents="none">
+      {hover && hoverX !== null && <g pointerEvents="none" data-export-ignore="true">
         <line x1={hoverX} x2={hoverX} y1={top} y2={top + plotHeight} stroke="#111827" strokeDasharray="4 4" opacity="0.45" />
         <rect x={tooltipX} y={top + 12} width={tooltipWidth} height={tooltipHeight} rx="9" fill="#ffffff" stroke="#9ca3af" opacity="0.98" />
         <text x={tooltipX + 12} y={top + 32} fill="#111827" fontSize="11" fontWeight="700">{hover.fullLabel || hover.label}</text>
@@ -923,6 +986,14 @@ function EnergyBarChart({ rows, selectedPVKeys }) {
         </g>)}
       </g>}
     </svg>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 9 }}>
+      <button type="button" onClick={() => downloadSvgGraphic(svgRef.current, fileName || "geracao_por_modulo", "png")} style={secondaryButton}>
+        Baixar PNG
+      </button>
+      <button type="button" onClick={() => downloadSvgGraphic(svgRef.current, fileName || "geracao_por_modulo", "svg")} style={secondaryButton}>
+        Baixar SVG
+      </button>
+    </div>
   </div>;
 }
 
@@ -1051,6 +1122,10 @@ function EnergyAggregationPanel() {
     energy: rows.reduce((sum, row) => sum + Number(row[key] || 0), 0)
   }));
   const grandTotal = totals.reduce((sum, item) => sum + item.energy, 0);
+  const selectedPeriodLabel = mode === "day" ? day : mode === "month" ? month : year;
+  const energyFileName =
+    "energia_modulos_" + mode + "_" + selectedPeriodLabel + "_" +
+    cutStart.replace(":", "") + "_" + cutEnd.replace(":", "");
 
   return <section className="no-print" style={{
     background: "linear-gradient(180deg,#17172a,#111122)",
@@ -1126,7 +1201,7 @@ function EnergyAggregationPanel() {
 
     <p style={{ color: theme.muted, fontSize: 10.5, marginTop: 10 }}>{status}</p>
 
-    <EnergyBarChart rows={rows} selectedPVKeys={selectedPVKeys} />
+    <EnergyBarChart rows={rows} selectedPVKeys={selectedPVKeys} fileName={energyFileName} />
 
     {!!rows.length && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 9, marginTop: 12 }}>
       {totals.map((item) => <div key={item.key} style={{
