@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import { createHash } from "crypto";
 
 const FOXESS_BASE_URL = "https://www.foxesscloud.com";
 
