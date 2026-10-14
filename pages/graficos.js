@@ -222,6 +222,7 @@ function seriesStats(points) {
 }
 
 function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode }) {
+  const [hoverMinute, setHoverMinute] = useState(null);
   const width = 1100, height = 500, left = 92, right = 28, top = 34, bottom = 82;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
@@ -315,8 +316,65 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
     return value.toFixed(decimals) + (axisUnit ? " " + axisUnit : "");
   }
 
+  function nearestPreparedPoint(series, targetMinute) {
+    let best = null;
+    let bestGap = Infinity;
+    series.points.forEach((p) => {
+      const gap = Math.abs(analysisTimeMinutes(p.time) - targetMinute);
+      if (gap < bestGap) {
+        best = p;
+        bestGap = gap;
+      }
+    });
+    const maxGap = series.meta.kind === "irradiance" ? 60 : 20;
+    return best && bestGap <= maxGap ? best : null;
+  }
+
+  function handleAnalysisMouseMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const svgX = (event.clientX - rect.left) * (width / rect.width);
+    if (svgX < left || svgX > width - right) {
+      setHoverMinute(null);
+      return;
+    }
+    const minute = start + ((svgX - left) / plotWidth) * Math.max(1, end - start);
+    setHoverMinute(minute);
+  }
+
+  const hoverReadings = hoverMinute === null
+    ? []
+    : prepared.map((series) => {
+        const point = nearestPreparedPoint(series, hoverMinute);
+        if (!point) return null;
+        const rawValue = Number(point.value);
+        const displayValue = scaleMode === "normalized"
+          ? (rawValue / series.scaleMax) * 100
+          : rawValue;
+        return { series, point, rawValue, displayValue };
+      }).filter(Boolean);
+
+  const hoverX = hoverMinute === null
+    ? null
+    : left + ((hoverMinute - start) / Math.max(1, end - start)) * plotWidth;
+  const hoverLabel = hoverMinute === null
+    ? ""
+    : String(Math.floor(hoverMinute / 60)).padStart(2, "0") + ":" +
+      String(Math.round(hoverMinute % 60)).padStart(2, "0");
+  const tooltipWidth = 290;
+  const tooltipHeight = 36 + hoverReadings.length * 20;
+  const tooltipX = hoverX === null
+    ? 0
+    : (hoverX + tooltipWidth + 18 > width - right
+      ? Math.max(left + 4, hoverX - tooltipWidth - 12)
+      : hoverX + 12);
+
   return <div style={{ overflowX: "auto" }}>
-    <svg viewBox={"0 0 " + width + " " + height} style={{ width: "100%", minWidth: 820, background: "#ffffff", borderRadius: 12, border: "1px solid #d1d5db" }}>
+    <svg
+      viewBox={"0 0 " + width + " " + height}
+      onMouseMove={handleAnalysisMouseMove}
+      onMouseLeave={() => setHoverMinute(null)}
+      style={{ width: "100%", minWidth: 820, background: "#ffffff", borderRadius: 12, border: "1px solid #d1d5db", cursor: "crosshair" }}
+    >
       <rect x={0} y={0} width={width} height={height} fill="#ffffff" rx="12" />
 
       <text
@@ -362,6 +420,46 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
           <text x={xx + 28} y={yy + 4} fill="#1f2937" fontSize="10">{s.meta.label} [{s.meta.unit}]</text>
         </g>;
       })}
+
+      {hoverMinute !== null && hoverX !== null && <g pointerEvents="none">
+        <line
+          x1={hoverX} x2={hoverX}
+          y1={top} y2={top + plotHeight}
+          stroke="#111827" strokeWidth="1" strokeDasharray="4 4" opacity="0.6"
+        />
+        {hoverReadings.map(({ series, displayValue }) => <circle
+          key={"hover-" + series.key}
+          cx={hoverX}
+          cy={y(displayValue)}
+          r="4.5"
+          fill={series.color}
+          stroke="#ffffff"
+          strokeWidth="2"
+        />)}
+        <rect
+          x={tooltipX}
+          y={top + 10}
+          width={tooltipWidth}
+          height={tooltipHeight}
+          rx="9"
+          fill="#ffffff"
+          stroke="#9ca3af"
+          opacity="0.98"
+        />
+        <text x={tooltipX + 12} y={top + 30} fill="#111827" fontSize="11" fontWeight="700">
+          {hoverLabel}
+        </text>
+        {hoverReadings.map(({ series, rawValue, displayValue }, index) => {
+          const rawLabel = rawValue.toFixed(Math.abs(rawValue) >= 100 ? 1 : 3) + (series.meta.unit ? " " + series.meta.unit : "");
+          const normalizedLabel = scaleMode === "normalized" ? " · " + displayValue.toFixed(1) + "%" : "";
+          return <g key={"tooltip-" + series.key}>
+            <circle cx={tooltipX + 13} cy={top + 51 + index * 20} r="3" fill={series.color} />
+            <text x={tooltipX + 23} y={top + 55 + index * 20} fill="#374151" fontSize="10.5">
+              {series.meta.label}: {rawLabel}{normalizedLabel}
+            </text>
+          </g>;
+        })}
+      </g>}
     </svg>
   </div>;
 }
