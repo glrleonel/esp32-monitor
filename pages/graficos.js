@@ -222,7 +222,7 @@ function seriesStats(points) {
 }
 
 function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode }) {
-  const width = 1100, height = 500, left = 68, right = 28, top = 34, bottom = 82;
+  const width = 1100, height = 500, left = 92, right = 28, top = 34, bottom = 82;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const start = analysisTimeToMinutes(startTime);
@@ -240,18 +240,63 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
       color: analysisPalette[index % analysisPalette.length],
       points: raw,
       scaleMax: max || 1,
-      meta: analysisMeta[key] || { label: key, unit: "" }
+      meta: analysisMeta[key] || { label: key, unit: "", kind: "" }
     };
   }).filter((s) => s.points.length);
 
   if (end <= start) return <p style={{ color: theme.warning }}>A hora final deve ser posterior à hora inicial.</p>;
   if (!prepared.length) return <p style={{ color: theme.muted }}>Nenhuma série selecionada possui dados neste intervalo.</p>;
 
+  const units = [...new Set(prepared.map((s) => s.meta.unit).filter(Boolean))];
+
+  if (scaleMode === "real" && units.length > 1) {
+    return <div style={{
+      border: "1px solid " + theme.warning, borderRadius: 12, padding: 14,
+      background: "rgba(245,158,11,.08)", color: theme.text
+    }}>
+      <b>As séries selecionadas usam unidades diferentes: {units.join(", ")}.</b>
+      <p style={{ margin: "6px 0 0", color: theme.muted, fontSize: 11 }}>
+        Para manter o eixo Y fisicamente correto, selecione variáveis com a mesma unidade ou escolha a escala normalizada para comparar apenas o formato das curvas.
+      </p>
+    </div>;
+  }
+
+  const axisUnit = scaleMode === "normalized" ? "%" : (units[0] || "");
+  const unitAxisNames = {
+    "kW": "Potência",
+    "V": "Tensão",
+    "A": "Corrente",
+    "Hz": "Frequência",
+    "°C": "Temperatura",
+    "W/m²": "Irradiância",
+    "%": "Eficiência",
+    "kWh": "Energia"
+  };
+  const axisTitle = scaleMode === "normalized"
+    ? "Valor normalizado (%)"
+    : ((unitAxisNames[axisUnit] || "Valor") + (axisUnit ? " (" + axisUnit + ")" : ""));
+
   const displayValues = prepared.flatMap((s) => s.points.map((p) =>
     scaleMode === "normalized" ? (Number(p.value) / s.scaleMax) * 100 : Number(p.value)
   ));
-  const globalMin = scaleMode === "normalized" ? 0 : Math.min(0, ...displayValues);
-  const globalMax = scaleMode === "normalized" ? 100 : Math.max(...displayValues);
+
+  let globalMin;
+  let globalMax;
+
+  if (scaleMode === "normalized") {
+    globalMin = 0;
+    globalMax = 100;
+  } else {
+    const dataMin = Math.min(...displayValues);
+    const dataMax = Math.max(...displayValues);
+    const dataRange = Math.max(0.0001, dataMax - dataMin);
+    const padding = dataRange * 0.08;
+    const zeroBaselineUnits = ["kW", "A", "W/m²", "kWh"];
+    globalMin = zeroBaselineUnits.includes(axisUnit) && dataMin >= 0 ? 0 : dataMin - padding;
+    globalMax = dataMax + padding;
+    if (globalMax <= globalMin) globalMax = globalMin + 1;
+  }
+
   const range = Math.max(0.0001, globalMax - globalMin);
   const x = (iso) => left + ((analysisTimeMinutes(iso) - start) / Math.max(1, end - start)) * plotWidth;
   const y = (displayValue) => top + ((globalMax - displayValue) / range) * plotHeight;
@@ -263,19 +308,40 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
     }).join(" ");
   }
 
+  function formatAxisValue(value) {
+    if (scaleMode === "normalized") return value.toFixed(0) + "%";
+    const abs = Math.abs(value);
+    const decimals = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
+    return value.toFixed(decimals) + (axisUnit ? " " + axisUnit : "");
+  }
+
   return <div style={{ overflowX: "auto" }}>
     <svg viewBox={"0 0 " + width + " " + height} style={{ width: "100%", minWidth: 820, background: "#ffffff", borderRadius: 12, border: "1px solid #d1d5db" }}>
       <rect x={0} y={0} width={width} height={height} fill="#ffffff" rx="12" />
+
+      <text
+        x="18"
+        y={top + plotHeight / 2}
+        transform={"rotate(-90 18 " + (top + plotHeight / 2) + ")"}
+        textAnchor="middle"
+        fontSize="12"
+        fontWeight="700"
+        fill="#374151"
+      >
+        {axisTitle}
+      </text>
+
       {[0, .25, .5, .75, 1].map((p) => {
         const yy = top + p * plotHeight;
         const val = globalMax - p * range;
         return <g key={p}>
           <line x1={left} y1={yy} x2={width - right} y2={yy} stroke="#e5e7eb" />
-          <text x={8} y={yy + 4} fontSize="11" fill="#6b7280">
-            {scaleMode === "normalized" ? val.toFixed(0) + "%" : val.toFixed(2)}
+          <text x={left - 8} y={yy + 4} textAnchor="end" fontSize="11" fill="#6b7280">
+            {formatAxisValue(val)}
           </text>
         </g>;
       })}
+
       {Array.from({ length: 8 }, (_, i) => {
         const min = start + ((end - start) * i) / 7;
         const hh = String(Math.floor(min / 60)).padStart(2, "0");
@@ -283,11 +349,13 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
         const xx = left + (i * plotWidth) / 7;
         return <text key={i} x={xx} y={height - 52} textAnchor="middle" fill="#6b7280" fontSize="11">{hh}:{mm}</text>;
       })}
+
       {prepared.map((s) => <path key={s.key} d={pathFor(s)} fill="none" stroke={s.color} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />)}
+
       {prepared.map((s, i) => {
         const col = i % 3;
         const row = Math.floor(i / 3);
-        const xx = left + col * 330;
+        const xx = left + col * 320;
         const yy = height - 26 + row * 18;
         return <g key={"legend-" + s.key}>
           <line x1={xx} x2={xx + 22} y1={yy} y2={yy} stroke={s.color} strokeWidth="3" />
@@ -300,8 +368,8 @@ function AnalysisLineChart({ seriesMap, selected, startTime, endTime, scaleMode 
 
 function IntegratedAnalysisPanel({ date, startTime, endTime }) {
   const [seriesMap, setSeriesMap] = useState({});
-  const [selected, setSelected] = useState(["pv1Power", "pv2Power", "pv3Power", "irradiance"]);
-  const [scaleMode, setScaleMode] = useState("normalized");
+  const [selected, setSelected] = useState(["pv1Power", "pv2Power", "pv3Power", "pv4Power"]);
+  const [scaleMode, setScaleMode] = useState("real");
   const [compareA, setCompareA] = useState("pv1Power");
   const [compareB, setCompareB] = useState("pv2Power");
   const [status, setStatus] = useState("Carregando análise integrada...");
@@ -461,17 +529,21 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
     </div>
 
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginTop: 14 }}>
-      <label style={{ fontSize: 11 }}>Escala de comparação<br />
-        <select value={scaleMode} onChange={(e) => setScaleMode(e.target.value)} style={{ ...inputStyle, width: 240 }}>
-          <option value="normalized">Normalizada · comparar forma das curvas</option>
-          <option value="real">Valores reais · ideal para variáveis da mesma unidade</option>
+      <label style={{ fontSize: 11 }}>Escala do eixo Y<br />
+        <select value={scaleMode} onChange={(e) => setScaleMode(e.target.value)} style={{ ...inputStyle, width: 260 }}>
+          <option value="real">Valores reais · mostra unidade física</option>
+          <option value="normalized">Normalizada · % do máximo de cada série</option>
         </select>
       </label>
-      <button type="button" onClick={() => setSelected(["pv1Power","pv2Power","pv3Power","pv4Power","estimatedModulePower"])} style={secondaryButton}>Preset potência FV</button>
-      <button type="button" onClick={() => setSelected(["pv1Current","pv2Current","pv3Current","pv4Current"])} style={secondaryButton}>Preset correntes</button>
-      <button type="button" onClick={() => setSelected(["temp_sensor2","temp_sensor3","temp_sensor6","temp_sensor7","temp_sensor8","temp_sensor9","irradiance"])} style={secondaryButton}>Preset térmico + irradiância</button>
-      <button type="button" onClick={() => setSelected(["pv1EnergyInt","pv2EnergyInt","pv3EnergyInt","pv4EnergyInt","acEnergyInt"])} style={secondaryButton}>Preset energias</button>
+      <button type="button" onClick={() => { setSelected(["pv1Power","pv2Power","pv3Power","pv4Power","estimatedModulePower"]); setScaleMode("real"); }} style={secondaryButton}>Preset potência FV</button>
+      <button type="button" onClick={() => { setSelected(["pv1Current","pv2Current","pv3Current","pv4Current"]); setScaleMode("real"); }} style={secondaryButton}>Preset correntes</button>
+      <button type="button" onClick={() => { setSelected(["temp_sensor2","temp_sensor3","temp_sensor6","temp_sensor7","temp_sensor8","temp_sensor9","irradiance"]); setScaleMode("normalized"); }} style={secondaryButton}>Preset térmico + irradiância</button>
+      <button type="button" onClick={() => { setSelected(["pv1EnergyInt","pv2EnergyInt","pv3EnergyInt","pv4EnergyInt","acEnergyInt"]); setScaleMode("real"); }} style={secondaryButton}>Preset energias</button>
     </div>
+
+    <p style={{ margin: "8px 0 0", color: theme.muted, fontSize: 10.5 }}>
+      Em valores reais, o eixo Y mostra a unidade física selecionada, como kW, V, A, Hz, °C, W/m² ou kWh. Para misturar grandezas de unidades diferentes no mesmo gráfico, use a escala normalizada.
+    </p>
 
     <div style={{ marginTop: 14 }}>
       <AnalysisLineChart seriesMap={seriesMap} selected={selected} startTime={startTime} endTime={endTime} scaleMode={scaleMode} />
