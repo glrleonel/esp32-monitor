@@ -375,8 +375,19 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
       const warnings = [];
       if (!temps.ok) warnings.push("temperaturas indisponíveis");
       if (!fox.ok) warnings.push("FoxESS: " + (fox.message || fox.error || "indisponível"));
-      if (!inmet.ok) warnings.push("INMET: " + (inmet.detail || inmet.error || "indisponível"));
-      setStatus(warnings.length ? "Carregado com ressalvas: " + warnings.join(" · ") : "Dados integrados carregados para " + date + ".");
+      else if (!fox.pointCount) warnings.push("FoxESS: consulta histórica respondeu sem pontos");
+      if (!inmet.ok) {
+        const inmetMsg = inmet.error === "inmet_token_required"
+          ? "INMET: dados horários exigem token oficial"
+          : "INMET: " + (inmet.detail || inmet.error || "indisponível");
+        warnings.push(inmetMsg);
+      }
+      const foxInfo = fox.ok && fox.pointCount
+        ? " · FoxESS: " + fox.pointCount + " pontos em " + (fox.returnedVariables || []).length + " variáveis"
+        : "";
+      setStatus(warnings.length
+        ? "Carregado com ressalvas: " + warnings.join(" · ") + foxInfo
+        : "Dados integrados carregados para " + date + foxInfo + ".");
     } catch (error) {
       setStatus("Erro ao carregar análise integrada: " + error.message);
     }
@@ -429,7 +440,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
         <p style={{ margin: 0, color: theme.primaryLight, fontSize: 11, fontWeight: 800 }}>ANÁLISE INTEGRADA DE RESULTADOS</p>
         <h2 style={{ margin: "5px 0 6px", fontSize: 22 }}>Temperatura, irradiância e grandezas elétricas no mesmo intervalo</h2>
         <p style={{ margin: 0, color: theme.muted, fontSize: 11 }}>
-          Use o recorte de horário no topo da página para isolar, por exemplo, o período de sombreamento da manhã.
+          Defina data, hora inicial e hora final no painel acima. O mesmo recorte é aplicado às integrais, às comparações e às curvas desta análise.
         </p>
       </div>
       <button type="button" onClick={loadIntegrated} style={primaryButton}>Atualizar dados</button>
@@ -830,7 +841,7 @@ export default function GraficosTemperatura() {
         <div>
           <p style={{ margin: 0, color: theme.primaryLight, fontWeight: 700 }}>Ferramenta de análise integrada</p>
           <h1 style={{ margin: "7px 0", fontSize: 30 }}>Análise de resultados e gráficos para o TFC</h1>
-          <p style={{ margin: 0, color: theme.muted }}>Cruze temperaturas, irradiância e dados elétricos, selecione horários e compare módulos, inversor e energia integrada.</p>
+          <p style={{ margin: 0, color: theme.muted }}>Selecione data e horário, cruze temperaturas e grandezas elétricas e, quando disponível, inclua irradiância da estação INMET A514.</p>
         </div>
         <a href="/dashboard-v2" style={{
           color: "white", textDecoration: "none", border: "1px solid " + theme.primaryLight,
@@ -838,8 +849,6 @@ export default function GraficosTemperatura() {
         }}>Voltar ao dashboard</a>
       </div>
     </header>
-
-    <IntegratedAnalysisPanel date={date} startTime={startTime} endTime={endTime} />
 
     <section className="no-print" style={{
       background: theme.card, border: "1px solid " + theme.border, borderRadius: 16,
@@ -891,6 +900,8 @@ export default function GraficosTemperatura() {
         <span style={{ color: theme.muted, fontSize: 11 }}>{message}</span>
       </div>
     </section>
+
+    <IntegratedAnalysisPanel date={date} startTime={startTime} endTime={endTime} />
 
     <section className="print-area" style={{
       background: "#ffffff", border: "1px solid #d1d5db", borderRadius: 14,
