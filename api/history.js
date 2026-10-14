@@ -2,6 +2,8 @@ const crypto = require("crypto");
 
 const FOXESS_BASE_URL = "https://www.foxesscloud.com";
 const INMET_STATION = "A514";
+const INMET_WIGOS = "0-76-0-3162500000000078";
+const INMET_WIS2_BASE = "https://wis2bra.inmet.gov.br/oapi";
 const DEFAULT_MODULE_POWER_W = 610;
 
 const FOXESS_VARIABLES = [
@@ -408,14 +410,7 @@ function inmetUtcTimestamp(row) {
   return Number.isFinite(ts) ? ts : null;
 }
 
-async function fetchInmetDay(date) {
-  const token = process.env.INMET_TOKEN;
-  if (!token) {
-    const error = new Error("O endpoint horário atual do INMET exige token de acesso.");
-    error.code = "INMET_TOKEN_REQUIRED";
-    throw error;
-  }
-
+async function fetchInmetTokenDay(date, token) {
   const url =
     "https://apitempo.inmet.gov.br/token/estacao/" +
     date + "/" + date + "/" + INMET_STATION + "/" + encodeURIComponent(token);
@@ -446,6 +441,129 @@ async function fetchInmetDay(date) {
   );
 }
 
+function inmetLocalDayUtcRange(date) {
+  const start = new Date(date + "T00:00:00-03:00");
+  const end = new Date(date + "T23:59:59-03:00");
+  return {
+    startMs: start.getTime(),
+    endMs: end.getTime(),
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
+}
+
+function radiationDurationSeconds(phenomenonTime) {
+  const text = String(phenomenonTime || "");
+  if (!text.includes("/")) return 3600;
+  const parts = text.split("/");
+  const a = Date.parse(parts[0]);
+  const b = Date.parse(parts[1]);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 3600;
+  return (b - a) / 1000;
+}
+
+function radiationToAverageIrradiance(value, units, phenomenonTime) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const u = String(units || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (u.includes("w m-2") || u.includes("w/m2") || u.includes("w m^-2")) {
+    return n;
+  }
+
+  const seconds = radiationDurationSeconds(phenomenonTime);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+
+  if (u.includes("kj")) return (n * 1000) / seconds;
+  if (u.includes("j")) return n / seconds;
+
+  return null;
+}
+
+async function fetchInmetWis2Day(date) {
+  const range = inmetLocalDayUtcRange(date);
+  const collection = "urn:wmo:md:br-inmet:synop";
+  const url = new URL(
+    INMET_WIS2_BASE + "/collections/" + encodeURIComponent(collection) + "/items"
+  );
+
+  url.searchParams.set("f", "json");
+  url.searchParams.set("wigos_station_identifier", INMET_WIGOS);
+  url.searchParams.set("datetime", range.startIso + "/" + range.endIso);
+  url.searchParams.set("limit", "1000");
+  url.searchParams.set("sortby", "phenomenonTime");
+
+  const response = await fetch(url.toString(), {
+    headers: { "User-Agent": "Solarneo-UFSJ-PV-Monitor/1.0" },
+    cache: "no-store",
+  });
+
+  const text = await response.text();
+  if (!response.ok) throw new Error("WIS2 HTTP " + response.status);
+  if (!text || !text.trim()) throw new Error("WIS2 retornou resposta vazia.");
+
+  const json = JSON.parse(text);
+  const features = Array.isArray(json?.features) ? json.features : [];
+
+  // Defensively filter because older pygeoapi versions could ignore one of several filters.
+  const stationFeatures = features.filter((feature) => {
+    const p = feature?.properties || {};
+    const stationOk = !p.wigos_station_identifier || p.wigos_station_identifier === INMET_WIGOS;
+    const ts = Date.parse(p.reportTime || String(p.phenomenonTime || "").split("/").pop());
+    return stationOk && Number.isFinite(ts) && ts >= range.startMs && ts <= range.endMs;
+  });
+
+  const names = [...new Set(
+    stationFeatures.map((f) => f?.properties?.name).filter(Boolean)
+  )];
+
+  const radiationNames = names.filter((name) =>
+    /radiation|solar|short.?wave/i.test(String(name))
+  );
+
+  // For PV reference, accept only global solar radiation. Net radiation is a
+  // different physical quantity and must not be silently used as irradiance.
+  const globalSolar = stationFeatures.filter((feature) => {
+    const name = String(feature?.properties?.name || "").toLowerCase();
+    return name.includes("global") && name.includes("solar") && name.includes("radiation");
+  });
+
+  const dedup = new Map();
+
+  globalSolar.forEach((feature) => {
+    const p = feature.properties || {};
+    const rawTime = p.reportTime || String(p.phenomenonTime || "").split("/").pop();
+    const timestamp = Date.parse(rawTime);
+    if (!Number.isFinite(timestamp)) return;
+
+    const irradianceWm2 = radiationToAverageIrradiance(
+      p.value,
+      p.units,
+      p.phenomenonTime
+    );
+    if (!Number.isFinite(irradianceWm2)) return;
+
+    dedup.set(timestamp, {
+      timestamp,
+      time: new Date(timestamp).toISOString(),
+      radiationJm2: String(p.units || "").toLowerCase().includes("kj")
+        ? Number(p.value) * 1000
+        : Number(p.value),
+      irradianceWm2: Math.max(0, irradianceWm2),
+      variable: p.name,
+      units: p.units || "",
+    });
+  });
+
+  return {
+    rows: [...dedup.values()].sort((a,b) => a.timestamp - b.timestamp),
+    featureCount: stationFeatures.length,
+    availableVariables: names,
+    radiationVariables: radiationNames,
+    sourceUrl: url.toString(),
+  };
+}
+
 async function handleInmet(req, res) {
   const date = req.query.date;
   const modulePowerW = Math.max(1, Number(req.query.modulePowerW || DEFAULT_MODULE_POWER_W));
@@ -454,42 +572,101 @@ async function handleInmet(req, res) {
     return res.status(400).json({ ok: false, error: "Informe date=AAAA-MM-DD." });
   }
 
+  const token = process.env.INMET_TOKEN;
+  let tokenError = null;
+
+  if (token) {
+    try {
+      const rawRows = await fetchInmetTokenDay(date, token);
+      const rows = rawRows.map((row) => {
+        const timestamp = inmetUtcTimestamp(row);
+        const radiationKjM2 = parseNumber(
+          row.RAD_GLO ?? row.RADIACAO_GLOBAL ?? row.radiacao_global ?? row.radiacao
+        );
+        const irradianceWm2 = radiationKjM2 === null ? null : radiationKjM2 / 3.6;
+        const estimatedModulePowerKw = irradianceWm2 === null
+          ? null
+          : (modulePowerW / 1000) * (irradianceWm2 / 1000);
+
+        return {
+          timestamp,
+          time: timestamp ? new Date(timestamp).toISOString() : null,
+          radiationKjM2,
+          irradianceWm2,
+          estimatedModulePowerKw,
+        };
+      }).filter((row) => row.timestamp).sort((a,b) => a.timestamp - b.timestamp);
+
+      if (rows.some((row) => Number.isFinite(row.irradianceWm2))) {
+        return res.status(200).json({
+          ok: true,
+          station: INMET_STATION,
+          wigos: INMET_WIGOS,
+          source: "apitempo-token",
+          date,
+          modulePowerW,
+          note: "Radiação global horizontal horária do INMET. Horários originais em UTC.",
+          rows,
+        });
+      }
+    } catch (error) {
+      tokenError = error.message;
+    }
+  }
+
   try {
-    const rawRows = await fetchInmetDay(date);
-    const rows = rawRows.map((row) => {
-      const timestamp = inmetUtcTimestamp(row);
-      const radiationKjM2 = parseNumber(
-        row.RAD_GLO ?? row.RADIACAO_GLOBAL ?? row.radiacao_global ?? row.radiacao
-      );
-      const irradianceWm2 = radiationKjM2 === null ? null : radiationKjM2 / 3.6;
-      const estimatedModulePowerKw = irradianceWm2 === null
-        ? null
-        : (modulePowerW / 1000) * (irradianceWm2 / 1000);
+    const wis = await fetchInmetWis2Day(date);
 
-      return {
-        timestamp,
-        time: timestamp ? new Date(timestamp).toISOString() : null,
-        radiationKjM2,
-        irradianceWm2,
-        estimatedModulePowerKw,
-      };
-    }).filter((row) => row.timestamp).sort((a,b) => a.timestamp - b.timestamp);
+    if (wis.rows.length) {
+      const rows = wis.rows.map((row) => ({
+        timestamp: row.timestamp,
+        time: row.time,
+        radiationJm2: row.radiationJm2,
+        irradianceWm2: row.irradianceWm2,
+        estimatedModulePowerKw:
+          (modulePowerW / 1000) * (row.irradianceWm2 / 1000),
+        variable: row.variable,
+      }));
 
-    return res.status(200).json({
-      ok: true,
+      return res.status(200).json({
+        ok: true,
+        station: INMET_STATION,
+        wigos: INMET_WIGOS,
+        source: "wis2-public",
+        date,
+        modulePowerW,
+        note: "Radiação solar global observada na rede pública WIS2 do INMET, convertida da energia integrada no período para irradiância média.",
+        rows,
+        diagnostics: {
+          featureCount: wis.featureCount,
+          radiationVariables: wis.radiationVariables,
+        },
+      });
+    }
+
+    return res.status(424).json({
+      ok: false,
+      error: "inmet_radiation_unavailable",
+      detail: token
+        ? "A rota autenticada não entregou radiação global e o WIS2 público não publicou a variável global solar para este dia."
+        : "O WIS2 público do INMET respondeu, mas não publicou radiação solar global para este dia. Para usar RAD_GLO diretamente, configure INMET_TOKEN.",
       station: INMET_STATION,
-      date,
-      modulePowerW,
-      note: "Irradiância média horária estimada a partir da radiação global horizontal do INMET. A estimativa FV é referência simples e não corrige plano inclinado, temperatura, bifacialidade ou perdas.",
-      rows,
+      wigos: INMET_WIGOS,
+      tokenError,
+      diagnostics: {
+        featureCount: wis.featureCount,
+        availableVariables: wis.availableVariables,
+        radiationVariables: wis.radiationVariables,
+      },
     });
   } catch (error) {
-    const tokenIssue = error.code === "INMET_TOKEN_REQUIRED" || error.code === "INMET_TOKEN_INVALID";
-    return res.status(tokenIssue ? 424 : 502).json({
+    return res.status(502).json({
       ok: false,
-      error: tokenIssue ? "inmet_token_required" : "inmet_failed",
-      detail: error.message,
+      error: "inmet_failed",
+      detail: "Falha no WIS2 público do INMET: " + error.message +
+        (tokenError ? " · apitempo: " + tokenError : ""),
       station: INMET_STATION,
+      wigos: INMET_WIGOS,
     });
   }
 }
