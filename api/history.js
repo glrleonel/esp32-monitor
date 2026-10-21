@@ -247,7 +247,6 @@ async function handleFoxessHistory(req, res) {
   }
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
-  const correctedSeries = applyCalculatedPvPower(normalized.series);
 
   return res.status(200).json({
     ok: true,
@@ -257,9 +256,9 @@ async function handleFoxessHistory(req, res) {
     endTime,
     deviceSN: normalized.deviceSN || sn,
     pointCount: normalized.pointCount,
-    returnedVariables: Object.keys(correctedSeries),
-    powerSource: "pv1-pv4 calculated as V x I / 1000",
-    series: correctedSeries,
+    returnedVariables: normalized.returnedVariables,
+    powerSource: "foxess_reported_power",
+    series: normalized.series,
   });
 }
 
@@ -344,10 +343,7 @@ async function handleFoxessEnergyDay(req, res) {
 
   const path = "/op/v0/device/history/query";
   const variables = [
-    "pv1Volt","pv1Current","pv1Power",
-    "pv2Volt","pv2Current","pv2Power",
-    "pv3Volt","pv3Current","pv3Power",
-    "pv4Volt","pv4Current","pv4Power",
+    "pv1Power","pv2Power","pv3Power","pv4Power",
     "PVEnergyTotal","generation","todayYield"
   ];
 
@@ -368,13 +364,12 @@ async function handleFoxessEnergyDay(req, res) {
   }
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
-  const correctedSeries = applyCalculatedPvPower(normalized.series);
   const keys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
 
   const rawFullDayTotals = {};
   const rawSelectedTotals = {};
   keys.forEach((key) => {
-    const points = correctedSeries[key]?.points || [];
+    const points = normalized.series[key]?.points || [];
     rawFullDayTotals[key] = integrateSeriesWindow(points, fullDayStart, fullDayEnd, 30).energy;
     rawSelectedTotals[key] = integrateSeriesWindow(points, selectedStart, selectedEnd, 30).energy;
   });
@@ -434,7 +429,7 @@ async function handleFoxessEnergyDay(req, res) {
 
     keys.forEach((key) => {
       const raw = integrateSeriesWindow(
-        correctedSeries[key]?.points || [],
+        normalized.series[key]?.points || [],
         cursor,
         bucketEnd,
         30
@@ -464,7 +459,7 @@ async function handleFoxessEnergyDay(req, res) {
       todayYieldUnit: normalized.series.todayYield?.unit || null,
       pvCounterDeltaKWh: pvCounterDelta,
       generationCounterDeltaKWh: generationCounterDelta,
-      powerSource: "pv1-pv4 calculated from voltage x current",
+      powerSource: "foxess_reported_power",
       rawFullDayModuleSumKWh: rawFullDaySum,
       rawSelectedModuleSumKWh: rawSelectedSum,
       selectedShareOfRawDay: rawFullDaySum > 0 ? rawSelectedSum / rawFullDaySum : null,
