@@ -495,7 +495,10 @@ function calculatePvPowerFromVI(series, index) {
           bestGap = gap;
         }
       }
-      if (bestGap <= 120000) ip = best;
+
+      // Voltage and current must represent practically the same acquisition instant.
+      // A loose match (minutes apart) creates false power peaks during fast shading changes.
+      if (bestGap <= 10000) ip = best;
     }
 
     if (!ip) continue;
