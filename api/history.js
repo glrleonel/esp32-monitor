@@ -247,6 +247,8 @@ async function handleFoxessHistory(req, res) {
   }
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
+  const correctedSeries = applyCalculatedPvPower(normalized.series);
+
   return res.status(200).json({
     ok: true,
     endpoint: path,
@@ -255,8 +257,9 @@ async function handleFoxessHistory(req, res) {
     endTime,
     deviceSN: normalized.deviceSN || sn,
     pointCount: normalized.pointCount,
-    returnedVariables: normalized.returnedVariables,
-    series: normalized.series,
+    returnedVariables: Object.keys(correctedSeries),
+    powerSource: "pv1-pv4 calculated as V x I / 1000",
+    series: correctedSeries,
   });
 }
 
@@ -341,7 +344,10 @@ async function handleFoxessEnergyDay(req, res) {
 
   const path = "/op/v0/device/history/query";
   const variables = [
-    "pv1Power","pv2Power","pv3Power","pv4Power",
+    "pv1Volt","pv1Current","pv1Power",
+    "pv2Volt","pv2Current","pv2Power",
+    "pv3Volt","pv3Current","pv3Power",
+    "pv4Volt","pv4Current","pv4Power",
     "PVEnergyTotal","generation","todayYield"
   ];
 
@@ -362,12 +368,13 @@ async function handleFoxessEnergyDay(req, res) {
   }
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
+  const correctedSeries = applyCalculatedPvPower(normalized.series);
   const keys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
 
   const rawFullDayTotals = {};
   const rawSelectedTotals = {};
   keys.forEach((key) => {
-    const points = normalized.series[key]?.points || [];
+    const points = correctedSeries[key]?.points || [];
     rawFullDayTotals[key] = integrateSeriesWindow(points, fullDayStart, fullDayEnd, 30).energy;
     rawSelectedTotals[key] = integrateSeriesWindow(points, selectedStart, selectedEnd, 30).energy;
   });
@@ -427,7 +434,7 @@ async function handleFoxessEnergyDay(req, res) {
 
     keys.forEach((key) => {
       const raw = integrateSeriesWindow(
-        normalized.series[key]?.points || [],
+        correctedSeries[key]?.points || [],
         cursor,
         bucketEnd,
         30
@@ -457,12 +464,119 @@ async function handleFoxessEnergyDay(req, res) {
       todayYieldUnit: normalized.series.todayYield?.unit || null,
       pvCounterDeltaKWh: pvCounterDelta,
       generationCounterDeltaKWh: generationCounterDelta,
+      powerSource: "pv1-pv4 calculated from voltage x current",
       rawFullDayModuleSumKWh: rawFullDaySum,
       rawSelectedModuleSumKWh: rawSelectedSum,
       selectedShareOfRawDay: rawFullDaySum > 0 ? rawSelectedSum / rawFullDaySum : null,
       factor: dailyScale,
     },
   });
+}
+
+function calculatePvPowerFromVI(series, index) {
+  const vPoints = [...(series["pv" + index + "Volt"]?.points || [])].sort((a,b) => a.timestamp - b.timestamp);
+  const iPoints = [...(series["pv" + index + "Current"]?.points || [])].sort((a,b) => a.timestamp - b.timestamp);
+
+  if (!vPoints.length || !iPoints.length) return [];
+
+  const iMap = new Map(iPoints.map((p) => [p.timestamp, p]));
+  const calculated = [];
+
+  for (const v of vPoints) {
+    let ip = iMap.get(v.timestamp);
+
+    if (!ip) {
+      let best = null;
+      let bestGap = Infinity;
+      for (const candidate of iPoints) {
+        const gap = Math.abs(candidate.timestamp - v.timestamp);
+        if (gap < bestGap) {
+          best = candidate;
+          bestGap = gap;
+        }
+      }
+      if (bestGap <= 120000) ip = best;
+    }
+
+    if (!ip) continue;
+
+    const volts = Number(v.value);
+    const amps = Number(ip.value);
+    if (!Number.isFinite(volts) || !Number.isFinite(amps)) continue;
+
+    calculated.push({
+      timestamp: v.timestamp,
+      time: v.time,
+      value: (volts * amps) / 1000,
+    });
+  }
+
+  return calculated;
+}
+
+function applyCalculatedPvPower(series) {
+  const output = { ...series };
+
+  for (let i = 1; i <= 4; i += 1) {
+    const key = "pv" + i + "Power";
+    const original = output[key];
+    const calculated = calculatePvPowerFromVI(output, i);
+
+    if (calculated.length) {
+      output[key + "Reported"] = original || {
+        variable: key + "Reported",
+        name: key + "Reported",
+        unit: "kW",
+        points: [],
+      };
+
+      output[key] = {
+        variable: key,
+        name: "PV" + i + " Power calculated from V x I",
+        unit: "kW",
+        source: "calculated_vi",
+        points: calculated,
+      };
+    }
+  }
+
+  const pvKeys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
+  const timeline = [...new Set(
+    pvKeys.flatMap((key) => (output[key]?.points || []).map((p) => p.timestamp))
+  )].sort((a,b) => a-b);
+
+  const totalPoints = timeline.map((timestamp) => {
+    let total = 0;
+    let count = 0;
+
+    for (const key of pvKeys) {
+      const p = (output[key]?.points || []).find((item) => item.timestamp === timestamp);
+      if (p && Number.isFinite(Number(p.value))) {
+        total += Number(p.value);
+        count += 1;
+      }
+    }
+
+    if (!count) return null;
+    return {
+      timestamp,
+      time: new Date(timestamp).toISOString(),
+      value: total,
+    };
+  }).filter(Boolean);
+
+  if (totalPoints.length) {
+    if (output.pvPower) output.pvPowerReported = output.pvPower;
+    output.pvPower = {
+      variable: "pvPower",
+      name: "PV total power calculated from V x I",
+      unit: "kW",
+      source: "calculated_vi_sum",
+      points: totalPoints,
+    };
+  }
+
+  return output;
 }
 
 function cumulativeDelta(points) {
