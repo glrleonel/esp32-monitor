@@ -556,6 +556,93 @@ async function handleFoxessEnergyCheck(req, res) {
   });
 }
 
+
+async function handleFoxessPowerCheck(req, res) {
+  const token = process.env.FOXESS_TOKEN;
+  const sn = process.env.FOXESS_DEVICE_SN;
+  const date = req.query.date;
+  const startTime = req.query.startTime || "05:30";
+  const endTime = req.query.endTime || "18:30";
+
+  if (!token || !sn) return res.status(500).json({ok:false,error:"FoxESS não configurado."});
+  if (!date) return res.status(400).json({ok:false,error:"Informe date=AAAA-MM-DD."});
+
+  const begin = localDateTimeMs(date,startTime);
+  const end = Math.min(localDateTimeMs(date,endTime),Date.now());
+  const path="/op/v0/device/history/query";
+  const variables=[
+    "pv1Volt","pv1Current","pv1Power",
+    "pv2Volt","pv2Current","pv2Power",
+    "pv3Volt","pv3Current","pv3Power",
+    "pv4Volt","pv4Current","pv4Power",
+    "pvPower"
+  ];
+
+  const fox=await foxessPost(path,token,{sn,variables,begin,end});
+  if(!fox.ok || (fox.data?.errno!==undefined && fox.data.errno!==0)){
+    return res.status(502).json({ok:false,error:"foxess_power_check_failed",errno:fox.data?.errno??null,message:fox.data?.msg??null});
+  }
+
+  const n=normalizeFoxHistory(fox.data?.result??null);
+  const s=n.series;
+
+  function intervalStats(points){
+    const src=[...(points||[])].sort((a,b)=>a.timestamp-b.timestamp);
+    const diffs=[];
+    for(let i=1;i<src.length;i++){
+      const d=(src[i].timestamp-src[i-1].timestamp)/60000;
+      if(d>0) diffs.push(d);
+    }
+    diffs.sort((a,b)=>a-b);
+    if(!diffs.length) return null;
+    const avg=diffs.reduce((a,b)=>a+b,0)/diffs.length;
+    const median=diffs[Math.floor(diffs.length/2)];
+    return {count:src.length,avgMinutes:avg,medianMinutes:median,minMinutes:diffs[0],maxMinutes:diffs[diffs.length-1]};
+  }
+
+  function compareModule(i){
+    const vp=s["pv"+i+"Volt"]?.points||[];
+    const cp=s["pv"+i+"Current"]?.points||[];
+    const pp=s["pv"+i+"Power"]?.points||[];
+    const samples=[];
+    for(const p of pp){
+      const v=nearestValue(vp,p.timestamp,2);
+      const a=nearestValue(cp,p.timestamp,2);
+      if(!Number.isFinite(v)||!Number.isFinite(a)) continue;
+      const calcKw=(v*a)/1000;
+      if(calcKw<=0) continue;
+      samples.push({
+        time:p.time,
+        reportedKw:Number(p.value),
+        calcKw,
+        ratio:Number(p.value)/calcKw
+      });
+    }
+    const ratios=samples.map(x=>x.ratio).filter(Number.isFinite).sort((a,b)=>a-b);
+    const avg=ratios.length?ratios.reduce((a,b)=>a+b,0)/ratios.length:null;
+    const median=ratios.length?ratios[Math.floor(ratios.length/2)]:null;
+    return {
+      unitPower:s["pv"+i+"Power"]?.unit||null,
+      unitVolt:s["pv"+i+"Volt"]?.unit||null,
+      unitCurrent:s["pv"+i+"Current"]?.unit||null,
+      interval:intervalStats(pp),
+      ratioReportedToVI:{avg,median,count:ratios.length},
+      examples:samples.filter((_,idx)=>idx%Math.max(1,Math.floor(samples.length/8))===0).slice(0,8)
+    };
+  }
+
+  const modules={};
+  for(let i=1;i<=4;i++) modules["pv"+i]=compareModule(i);
+
+  return res.status(200).json({
+    ok:true,
+    date,startTime,endTime,
+    modules,
+    pvPowerInterval:intervalStats(s.pvPower?.points||[]),
+    units:Object.fromEntries(variables.map(k=>[k,s[k]?.unit||null]))
+  });
+}
+
 function parseNumber(v) {
   if (v === null || v === undefined || v === "" || v === "9999") return null;
   const n = Number(String(v).replace(",", "."));
@@ -674,6 +761,9 @@ module.exports = async function handler(req, res) {
     }
     if (source === "foxess-energy-check") {
       return await handleFoxessEnergyCheck(req, res);
+    }
+    if (source === "foxess-power-check") {
+      return await handleFoxessPowerCheck(req, res);
     }
     if (source === "inmet") {
       return await handleInmet(req, res);
