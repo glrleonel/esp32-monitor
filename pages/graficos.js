@@ -819,7 +819,7 @@ function todayIsoBrazil() {
 }
 
 async function fetchEnergyDayCached(date, startTime, endTime) {
-  const key = "foxess-energy-v6|" + date + "|" + startTime + "|" + endTime;
+  const key = "foxess-energy-v7|" + date + "|" + startTime + "|" + endTime;
   const today = todayIsoBrazil();
 
   if (typeof window !== "undefined" && date !== today) {
