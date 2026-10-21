@@ -779,7 +779,21 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
     setHoverMinute(minute);
   }
 
-  const moduleEnergies = keys.map((key) => ({ key, energy: integratePowerPoints(clippedFox(key), 30) }));
+  const rawModuleEnergies = keys.map((key) => ({ key, energy: integratePowerPoints(clippedFox(key), 30) }));
+  const rawModuleTotal = rawModuleEnergies.reduce((sum, item) => sum + item.energy, 0);
+
+  const energyCounterPoints = clippedFox("PVEnergyTotal");
+  const counterDelta = energyCounterPoints.length >= 2
+    ? Number(energyCounterPoints[energyCounterPoints.length - 1].value) - Number(energyCounterPoints[0].value)
+    : null;
+  const correctionFactor = Number.isFinite(counterDelta) && counterDelta >= 0 && rawModuleTotal > 0
+    ? counterDelta / rawModuleTotal
+    : 1;
+
+  const moduleEnergies = rawModuleEnergies.map((item) => ({
+    ...item,
+    energy: item.energy * correctionFactor
+  }));
   const totalEnergy = moduleEnergies.reduce((sum, item) => sum + item.energy, 0);
   const estimatedEnergy = integratePowerPoints(estimated, 90);
 
@@ -1248,7 +1262,7 @@ export default function Dashboard() {
         selectedPVKeys={selectedPVKeys}
       />
       <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0 }}>
-        A estimativa usa 610 W por módulo e irradiância global horizontal do INMET. Serve como referência comparativa e não substitui uma estimativa no plano do módulo.
+        A energia dos módulos é distribuída proporcionalmente às curvas de potência, mas calibrada pelo contador acumulado de energia da FoxESS para que a soma feche com a energia real do período. A estimativa INMET usa 610 W por módulo e irradiância global horizontal.
       </p>
     </Card>
 
