@@ -650,12 +650,34 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
   const aEnergy = aMeta.kind === "power" ? analysisIntegrate(aPoints, compareA === "estimatedModulePower" ? 90 : 30) : null;
   const bEnergy = bMeta.kind === "power" ? analysisIntegrate(bPoints, compareB === "estimatedModulePower" ? 90 : 30) : null;
 
-  const moduleEnergy = ["pv1Power","pv2Power","pv3Power","pv4Power"].map((key) => ({
+  const rawModuleEnergy = ["pv1Power","pv2Power","pv3Power","pv4Power"].map((key) => ({
     key,
     energy: analysisIntegrate(clipped(key), 30)
   }));
+  const rawDcModulesTotal = rawModuleEnergy.reduce((s, x) => s + x.energy, 0);
+
+  const pvCounterPoints = clipped("PVEnergyTotal");
+  const pvCounterDelta = pvCounterPoints.length >= 2
+    ? Number(pvCounterPoints[pvCounterPoints.length - 1].value) - Number(pvCounterPoints[0].value)
+    : null;
+  const dcCorrectionFactor = Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0 && rawDcModulesTotal > 0
+    ? pvCounterDelta / rawDcModulesTotal
+    : 1;
+
+  const moduleEnergy = rawModuleEnergy.map((item) => ({
+    ...item,
+    energy: item.energy * dcCorrectionFactor
+  }));
   const dcModulesTotal = moduleEnergy.reduce((s, x) => s + x.energy, 0);
-  const acEnergy = analysisIntegrate(clipped("generationPower"), 30);
+
+  const generationCounterPoints = clipped("generation");
+  const generationCounterDelta = generationCounterPoints.length >= 2
+    ? Number(generationCounterPoints[generationCounterPoints.length - 1].value) - Number(generationCounterPoints[0].value)
+    : null;
+  const rawAcEnergy = analysisIntegrate(clipped("generationPower"), 30);
+  const acEnergy = Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
+    ? generationCounterDelta
+    : rawAcEnergy;
   const energyEfficiency = dcModulesTotal > 0 ? (acEnergy / dcModulesTotal) * 100 : null;
 
   return <section className="no-print" style={{
@@ -718,6 +740,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
         <div style={{ color: theme.muted, fontSize: 10 }}>Energia CA integrada</div>
         <div style={{ fontSize: 18, fontWeight: 800, marginTop: 3 }}>{acEnergy.toFixed(3)} kWh</div>
         <div style={{ color: theme.muted, fontSize: 10 }}>Eficiência energética no recorte: {energyEfficiency == null ? "-" : energyEfficiency.toFixed(1) + "%"}</div>
+        <div style={{ color: theme.muted, fontSize: 9.5, marginTop: 3 }}>Energia calibrada pelos contadores acumulados da FoxESS.</div>
       </div>
     </div>
 
