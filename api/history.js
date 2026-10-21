@@ -333,7 +333,7 @@ async function handleFoxessEnergyDay(req, res) {
   const path = "/op/v0/device/history/query";
   const fox = await foxessPost(path, token, {
     sn,
-    variables: ["pv1Power","pv2Power","pv3Power","pv4Power"],
+    variables: ["pv1Power","pv2Power","pv3Power","pv4Power","PVEnergyTotal","generation"],
     begin: windowStart,
     end: windowEnd,
   });
@@ -349,9 +349,26 @@ async function handleFoxessEnergyDay(req, res) {
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
   const keys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
+  const rawTotals = {};
+  keys.forEach((key) => {
+    rawTotals[key] = integrateSeriesWindow(normalized.series[key]?.points || [], windowStart, windowEnd, 30).energy;
+  });
+
+  const rawSum = keys.reduce((sum, key) => sum + Number(rawTotals[key] || 0), 0);
+  const pvCounterDelta = cumulativeDelta(normalized.series.PVEnergyTotal?.points || []);
+  const generationCounterDelta = cumulativeDelta(normalized.series.generation?.points || []);
+  const referenceEnergy = Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0
+    ? pvCounterDelta
+    : Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
+      ? generationCounterDelta
+      : null;
+  const correctionFactor = referenceEnergy !== null && rawSum > 0
+    ? referenceEnergy / rawSum
+    : 1;
+
   const totals = {};
   keys.forEach((key) => {
-    totals[key] = integrateSeriesWindow(normalized.series[key]?.points || [], windowStart, windowEnd, 30).energy;
+    totals[key] = Number(rawTotals[key] || 0) * correctionFactor;
   });
 
   const hourly = [];
@@ -373,7 +390,8 @@ async function handleFoxessEnergyDay(req, res) {
       label: String(local.getUTCHours()).padStart(2, "0") + ":00",
     };
     keys.forEach((key) => {
-      row[key] = integrateSeriesWindow(normalized.series[key]?.points || [], cursor, bucketEnd, 30).energy;
+      const raw = integrateSeriesWindow(normalized.series[key]?.points || [], cursor, bucketEnd, 30).energy;
+      row[key] = raw * correctionFactor;
     });
     hourly.push(row);
     cursor = bucketEnd;
@@ -388,6 +406,14 @@ async function handleFoxessEnergyDay(req, res) {
     pointCount: normalized.pointCount,
     totals,
     hourly,
+    correction: {
+      method: referenceEnergy !== null ? "foxess_cumulative_energy_counter" : "raw_power_integration_fallback",
+      referenceEnergyKWh: referenceEnergy,
+      rawIntegratedModuleSumKWh: rawSum,
+      factor: correctionFactor,
+      pvCounterDeltaKWh: pvCounterDelta,
+      generationCounterDeltaKWh: generationCounterDelta,
+    },
   });
 }
 
