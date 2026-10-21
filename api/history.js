@@ -755,6 +755,97 @@ async function handleFoxessPowerCheck(req, res) {
   });
 }
 
+
+async function handleFoxessIntegrationAudit(req, res) {
+  const token = process.env.FOXESS_TOKEN;
+  const sn = process.env.FOXESS_DEVICE_SN;
+  const date = req.query.date;
+  const startTime = req.query.startTime || "05:30";
+  const endTime = req.query.endTime || "18:30";
+
+  if (!token || !sn) return res.status(500).json({ok:false,error:"FoxESS não configurado."});
+  if (!date) return res.status(400).json({ok:false,error:"Informe date=AAAA-MM-DD."});
+
+  const begin = localDateTimeMs(date,startTime);
+  const end = Math.min(localDateTimeMs(date,endTime),Date.now());
+  const path="/op/v0/device/history/query";
+  const variables=["pvPower","generationPower","PVEnergyTotal","generation"];
+
+  const fox=await foxessPost(path,token,{sn,variables,begin,end});
+  if(!fox.ok || (fox.data?.errno!==undefined && fox.data.errno!==0)){
+    return res.status(502).json({ok:false,error:"foxess_integration_audit_failed",errno:fox.data?.errno??null,message:fox.data?.msg??null});
+  }
+
+  const n=normalizeFoxHistory(fox.data?.result??null);
+  const pv=[...(n.series.pvPower?.points||[])].sort((a,b)=>a.timestamp-b.timestamp);
+
+  let integrated=0;
+  const segments=[];
+  const gaps=[];
+
+  for(let i=1;i<pv.length;i++){
+    const a=pv[i-1];
+    const b=pv[i];
+    const dtMinutes=(b.timestamp-a.timestamp)/60000;
+    const dtHours=dtMinutes/60;
+    const avgPower=(Number(a.value)+Number(b.value))/2;
+    const energy=avgPower*dtHours;
+
+    if(dtMinutes>0){
+      segments.push({
+        i,
+        start:a.time,
+        end:b.time,
+        dtMinutes,
+        pStartKw:Number(a.value),
+        pEndKw:Number(b.value),
+        avgPowerKw:avgPower,
+        energyKWh:energy
+      });
+      integrated+=energy;
+      if(dtMinutes>10) gaps.push({start:a.time,end:b.time,dtMinutes});
+    }
+  }
+
+  const intervals=segments.map(s=>s.dtMinutes).sort((a,b)=>a-b);
+  const intervalStats=intervals.length ? {
+    count:intervals.length,
+    min:intervals[0],
+    median:intervals[Math.floor(intervals.length/2)],
+    avg:intervals.reduce((a,b)=>a+b,0)/intervals.length,
+    max:intervals[intervals.length-1]
+  } : null;
+
+  const pvDelta=cumulativeDelta(n.series.PVEnergyTotal?.points||[]);
+  const genDelta=cumulativeDelta(n.series.generation?.points||[]);
+  const genIntegrated=integrateSeriesWindow(n.series.generationPower?.points||[],begin,end,30).energy;
+
+  const topSegments=[...segments].sort((a,b)=>b.energyKWh-a.energyKWh).slice(0,20);
+  const sampleStep=Math.max(1,Math.floor(segments.length/20));
+  const sampled=segments.filter((_,idx)=>idx%sampleStep===0).slice(0,25);
+
+  return res.status(200).json({
+    ok:true,
+    date,startTime,endTime,
+    units:{
+      pvPower:n.series.pvPower?.unit||null,
+      generationPower:n.series.generationPower?.unit||null,
+      PVEnergyTotal:n.series.PVEnergyTotal?.unit||null,
+      generation:n.series.generation?.unit||null
+    },
+    points:pv.length,
+    intervalStatsMinutes:intervalStats,
+    integratedPvPowerKWh:integrated,
+    integratedGenerationPowerKWh:genIntegrated,
+    pvCounterDeltaKWh:pvDelta,
+    generationCounterDeltaKWh:genDelta,
+    ratioPvIntegralToCounter:Number.isFinite(pvDelta)&&pvDelta>0?integrated/pvDelta:null,
+    longGaps:gaps,
+    sampledSegments:sampled,
+    topEnergySegments:topSegments
+  });
+}
+
 function parseNumber(v) {
   if (v === null || v === undefined || v === "" || v === "9999") return null;
   const n = Number(String(v).replace(",", "."));
@@ -876,6 +967,9 @@ module.exports = async function handler(req, res) {
     }
     if (source === "foxess-power-check") {
       return await handleFoxessPowerCheck(req, res);
+    }
+    if (source === "foxess-integration-audit") {
+      return await handleFoxessIntegrationAudit(req, res);
     }
     if (source === "inmet") {
       return await handleInmet(req, res);
