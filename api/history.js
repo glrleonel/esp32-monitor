@@ -313,11 +313,20 @@ async function handleFoxessEnergyDay(req, res) {
     return res.status(400).json({ ok: false, error: "Informe date=AAAA-MM-DD." });
   }
 
-  const windowStart = localDateTimeMs(date, startTime);
-  const requestedEnd = localDateTimeMs(date, endTime);
-  const windowEnd = Math.min(requestedEnd, Date.now());
+  const selectedStart = localDateTimeMs(date, startTime);
+  const selectedRequestedEnd = localDateTimeMs(date, endTime);
+  const fullDayStart = localDateTimeMs(date, "00:00");
+  const fullDayRequestedEnd = localDateTimeMs(date, "23:59");
+  const now = Date.now();
+  const fullDayEnd = Math.min(fullDayRequestedEnd, now);
+  const selectedEnd = Math.min(selectedRequestedEnd, fullDayEnd);
 
-  if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd) || windowEnd <= windowStart) {
+  if (
+    !Number.isFinite(selectedStart) ||
+    !Number.isFinite(selectedEnd) ||
+    selectedEnd <= selectedStart ||
+    fullDayEnd <= fullDayStart
+  ) {
     return res.status(200).json({
       ok: true,
       date,
@@ -331,11 +340,16 @@ async function handleFoxessEnergyDay(req, res) {
   }
 
   const path = "/op/v0/device/history/query";
+  const variables = [
+    "pv1Power","pv2Power","pv3Power","pv4Power",
+    "PVEnergyTotal","generation","todayYield"
+  ];
+
   const fox = await foxessPost(path, token, {
     sn,
-    variables: ["pv1Power","pv2Power","pv3Power","pv4Power","PVEnergyTotal","generation"],
-    begin: windowStart,
-    end: windowEnd,
+    variables,
+    begin: fullDayStart,
+    end: fullDayEnd,
   });
 
   if (!fox.ok || (fox.data?.errno !== undefined && fox.data.errno !== 0)) {
@@ -349,31 +363,51 @@ async function handleFoxessEnergyDay(req, res) {
 
   const normalized = normalizeFoxHistory(fox.data?.result ?? null);
   const keys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
-  const rawTotals = {};
+
+  const rawFullDayTotals = {};
+  const rawSelectedTotals = {};
   keys.forEach((key) => {
-    rawTotals[key] = integrateSeriesWindow(normalized.series[key]?.points || [], windowStart, windowEnd, 30).energy;
+    const points = normalized.series[key]?.points || [];
+    rawFullDayTotals[key] = integrateSeriesWindow(points, fullDayStart, fullDayEnd, 30).energy;
+    rawSelectedTotals[key] = integrateSeriesWindow(points, selectedStart, selectedEnd, 30).energy;
   });
 
-  const rawSum = keys.reduce((sum, key) => sum + Number(rawTotals[key] || 0), 0);
+  const rawFullDaySum = keys.reduce((sum, key) => sum + Number(rawFullDayTotals[key] || 0), 0);
+  const rawSelectedSum = keys.reduce((sum, key) => sum + Number(rawSelectedTotals[key] || 0), 0);
+
+  const todayYieldPoints = [...(normalized.series.todayYield?.points || [])]
+    .filter((p) => Number.isFinite(Number(p.value)))
+    .sort((a,b) => a.timestamp - b.timestamp);
+  const todayYieldLast = todayYieldPoints.length
+    ? Number(todayYieldPoints[todayYieldPoints.length - 1].value)
+    : null;
+
   const pvCounterDelta = cumulativeDelta(normalized.series.PVEnergyTotal?.points || []);
   const generationCounterDelta = cumulativeDelta(normalized.series.generation?.points || []);
-  const referenceEnergy = Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0
-    ? pvCounterDelta
+
+  // todayYield is the preferred daily reference because it is the value shown by FoxESS
+  // for the day. Some FoxESS models label its unit inconsistently, but semantically it is
+  // the accumulated daily yield. If absent, fall back to cumulative energy counters.
+  const officialDailyEnergy = Number.isFinite(todayYieldLast) && todayYieldLast >= 0
+    ? todayYieldLast
     : Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
       ? generationCounterDelta
-      : null;
-  const correctionFactor = referenceEnergy !== null && rawSum > 0
-    ? referenceEnergy / rawSum
+      : Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0
+        ? pvCounterDelta
+        : null;
+
+  const dailyScale = officialDailyEnergy !== null && rawFullDaySum > 0
+    ? officialDailyEnergy / rawFullDaySum
     : 1;
 
   const totals = {};
   keys.forEach((key) => {
-    totals[key] = Number(rawTotals[key] || 0) * correctionFactor;
+    totals[key] = Number(rawSelectedTotals[key] || 0) * dailyScale;
   });
 
   const hourly = [];
-  let cursor = windowStart;
-  while (cursor < windowEnd) {
+  let cursor = selectedStart;
+  while (cursor < selectedEnd) {
     const local = new Date(cursor - 3 * 3600000);
     const nextHourLocalUtc = Date.UTC(
       local.getUTCFullYear(),
@@ -383,16 +417,24 @@ async function handleFoxessEnergyDay(req, res) {
       0, 0, 0
     );
     const nextHour = nextHourLocalUtc + 3 * 3600000;
-    const bucketEnd = Math.min(nextHour, windowEnd);
+    const bucketEnd = Math.min(nextHour, selectedEnd);
+
     const row = {
       start: cursor,
       end: bucketEnd,
       label: String(local.getUTCHours()).padStart(2, "0") + ":00",
     };
+
     keys.forEach((key) => {
-      const raw = integrateSeriesWindow(normalized.series[key]?.points || [], cursor, bucketEnd, 30).energy;
-      row[key] = raw * correctionFactor;
+      const raw = integrateSeriesWindow(
+        normalized.series[key]?.points || [],
+        cursor,
+        bucketEnd,
+        30
+      ).energy;
+      row[key] = raw * dailyScale;
     });
+
     hourly.push(row);
     cursor = bucketEnd;
   }
@@ -407,16 +449,21 @@ async function handleFoxessEnergyDay(req, res) {
     totals,
     hourly,
     correction: {
-      method: referenceEnergy !== null ? "foxess_cumulative_energy_counter" : "raw_power_integration_fallback",
-      referenceEnergyKWh: referenceEnergy,
-      rawIntegratedModuleSumKWh: rawSum,
-      factor: correctionFactor,
+      method: officialDailyEnergy !== null
+        ? (Number.isFinite(todayYieldLast) ? "foxess_todayYield_daily_reference" : "foxess_cumulative_counter_fallback")
+        : "raw_power_integration_fallback",
+      officialDailyEnergyKWh: officialDailyEnergy,
+      todayYieldLast: todayYieldLast,
+      todayYieldUnit: normalized.series.todayYield?.unit || null,
       pvCounterDeltaKWh: pvCounterDelta,
       generationCounterDeltaKWh: generationCounterDelta,
+      rawFullDayModuleSumKWh: rawFullDaySum,
+      rawSelectedModuleSumKWh: rawSelectedSum,
+      selectedShareOfRawDay: rawFullDaySum > 0 ? rawSelectedSum / rawFullDaySum : null,
+      factor: dailyScale,
     },
   });
 }
-
 
 function cumulativeDelta(points) {
   const src = [...(points || [])]
