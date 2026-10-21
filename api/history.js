@@ -391,6 +391,98 @@ async function handleFoxessEnergyDay(req, res) {
   });
 }
 
+
+function cumulativeDelta(points) {
+  const src = [...(points || [])]
+    .filter((p) => Number.isFinite(Number(p.timestamp)) && Number.isFinite(Number(p.value)))
+    .sort((a,b) => a.timestamp - b.timestamp);
+  if (src.length < 2) return null;
+  return Number(src[src.length - 1].value) - Number(src[0].value);
+}
+
+async function handleFoxessEnergyCheck(req, res) {
+  const token = process.env.FOXESS_TOKEN;
+  const sn = process.env.FOXESS_DEVICE_SN;
+  const date = req.query.date;
+  const startTime = req.query.startTime || "05:30";
+  const endTime = req.query.endTime || "18:30";
+
+  if (!token || !sn) return res.status(500).json({ ok:false, error:"FoxESS não configurado." });
+  if (!date) return res.status(400).json({ ok:false, error:"Informe date=AAAA-MM-DD." });
+
+  const begin = localDateTimeMs(date, startTime);
+  const requestedEnd = localDateTimeMs(date, endTime);
+  const end = Math.min(requestedEnd, Date.now());
+  if (end <= begin) return res.status(200).json({ ok:true, date, note:"Intervalo sem dados concluídos." });
+
+  const path = "/op/v0/device/history/query";
+  const variables = [
+    "pv1Power","pv2Power","pv3Power","pv4Power",
+    "pvPower","generationPower","PVEnergyTotal","generation"
+  ];
+
+  const fox = await foxessPost(path, token, { sn, variables, begin, end });
+
+  if (!fox.ok || (fox.data?.errno !== undefined && fox.data.errno !== 0)) {
+    return res.status(502).json({
+      ok:false,
+      error:"foxess_energy_check_failed",
+      errno:fox.data?.errno ?? null,
+      message:fox.data?.msg ?? null
+    });
+  }
+
+  const normalized = normalizeFoxHistory(fox.data?.result ?? null);
+  const s = normalized.series;
+  const pvKeys = ["pv1Power","pv2Power","pv3Power","pv4Power"];
+  const moduleEnergy = {};
+  pvKeys.forEach((key) => {
+    moduleEnergy[key] = integrateSeriesWindow(s[key]?.points || [], begin, end, 30).energy;
+  });
+
+  const moduleSum = pvKeys.reduce((sum,key) => sum + Number(moduleEnergy[key] || 0), 0);
+  const pvPowerIntegrated = integrateSeriesWindow(s.pvPower?.points || [], begin, end, 30).energy;
+  const acPowerIntegrated = integrateSeriesWindow(s.generationPower?.points || [], begin, end, 30).energy;
+  const pvCounterDelta = cumulativeDelta(s.PVEnergyTotal?.points || []);
+  const acCounterDelta = cumulativeDelta(s.generation?.points || []);
+
+  const units = {};
+  variables.forEach((key) => {
+    units[key] = s[key]?.unit || null;
+  });
+
+  return res.status(200).json({
+    ok:true,
+    date,
+    startTime,
+    endTime,
+    pointCount:normalized.pointCount,
+    returnedVariables:normalized.returnedVariables,
+    units,
+    energyKWh:{
+      modules:moduleEnergy,
+      moduleSum,
+      pvPowerIntegrated,
+      acPowerIntegrated,
+      pvCounterDelta,
+      acCounterDelta
+    },
+    ratios:{
+      moduleSum_to_acIntegrated: acPowerIntegrated > 0 ? moduleSum / acPowerIntegrated : null,
+      pvPower_to_acIntegrated: acPowerIntegrated > 0 ? pvPowerIntegrated / acPowerIntegrated : null,
+      moduleSum_to_pvPower: pvPowerIntegrated > 0 ? moduleSum / pvPowerIntegrated : null
+    },
+    samples:Object.fromEntries(
+      variables.map((key) => [key, {
+        unit:s[key]?.unit || null,
+        count:s[key]?.points?.length || 0,
+        first:s[key]?.points?.[0] || null,
+        last:s[key]?.points?.[s[key]?.points?.length - 1] || null
+      }])
+    )
+  });
+}
+
 function parseNumber(v) {
   if (v === null || v === undefined || v === "" || v === "9999") return null;
   const n = Number(String(v).replace(",", "."));
@@ -506,6 +598,9 @@ module.exports = async function handler(req, res) {
     }
     if (source === "foxess-energy-day") {
       return await handleFoxessEnergyDay(req, res);
+    }
+    if (source === "foxess-energy-check") {
+      return await handleFoxessEnergyCheck(req, res);
     }
     if (source === "inmet") {
       return await handleInmet(req, res);
