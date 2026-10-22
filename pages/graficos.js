@@ -533,14 +533,16 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
   const [compareB, setCompareB] = useState("pv2Power");
   const [status, setStatus] = useState("Carregando análise integrada...");
   const [loadedDate, setLoadedDate] = useState(null);
+  const [energyCalibration, setEnergyCalibration] = useState(null);
 
   async function loadIntegrated() {
     setStatus("Carregando temperaturas, FoxESS e INMET...");
     try {
-      const [temps, fox, inmet] = await Promise.all([
+      const [temps, fox, inmet, energy] = await Promise.all([
         fetch("/api/history?start=" + date + "&end=" + date + "&limit=5000").then((r) => r.json()),
         fetch("/api/history?source=foxess-history&date=" + date + "&startTime=05:00&endTime=19:30").then((r) => r.json()),
-        fetch("/api/history?source=inmet&date=" + date + "&modulePowerW=610").then((r) => r.json())
+        fetch("/api/history?source=inmet&date=" + date + "&modulePowerW=610").then((r) => r.json()),
+        fetch("/api/history?source=foxess-energy-day&date=" + date + "&startTime=" + startTime + "&endTime=" + endTime).then((r) => r.json())
       ]);
 
       const map = {};
@@ -578,11 +580,19 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
           .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.estimatedModulePowerKw) }));
       }
 
-      map.pv1EnergyInt = cumulativeIntegral(map.pv1Power, 30);
-      map.pv2EnergyInt = cumulativeIntegral(map.pv2Power, 30);
-      map.pv3EnergyInt = cumulativeIntegral(map.pv3Power, 30);
-      map.pv4EnergyInt = cumulativeIntegral(map.pv4Power, 30);
-      map.pvTotalEnergyInt = cumulativeIntegral(map.pvPower, 30);
+      const calibrationFactor = energy.ok && Number.isFinite(Number(energy.correction?.factor))
+        ? Number(energy.correction.factor)
+        : 1;
+      const scaleIntegral = (points, factor) => (points || []).map((p) => ({
+        ...p,
+        value: Number(p.value) * factor
+      }));
+
+      map.pv1EnergyInt = scaleIntegral(cumulativeIntegral(map.pv1Power, 30), calibrationFactor);
+      map.pv2EnergyInt = scaleIntegral(cumulativeIntegral(map.pv2Power, 30), calibrationFactor);
+      map.pv3EnergyInt = scaleIntegral(cumulativeIntegral(map.pv3Power, 30), calibrationFactor);
+      map.pv4EnergyInt = scaleIntegral(cumulativeIntegral(map.pv4Power, 30), calibrationFactor);
+      map.pvTotalEnergyInt = scaleIntegral(cumulativeIntegral(map.pvPower, 30), calibrationFactor);
       map.acEnergyInt = cumulativeIntegral(map.generationPower, 30);
       map.estimatedEnergyInt = cumulativeIntegral(map.estimatedModulePower, 90);
 
@@ -598,6 +608,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
       }
 
       setSeriesMap(map);
+      setEnergyCalibration(energy.ok ? energy : null);
       setLoadedDate(date);
       const warnings = [];
       if (!temps.ok) warnings.push("temperaturas indisponíveis");
@@ -609,6 +620,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
           : "INMET: " + (inmet.detail || inmet.error || "indisponível");
         warnings.push(inmetMsg);
       }
+      if (!energy.ok) warnings.push("calibração de energia indisponível");
       const foxInfo = fox.ok && fox.pointCount
         ? " · FoxESS: " + fox.pointCount + " pontos em " + (fox.returnedVariables || []).length + " variáveis"
         : "";
@@ -622,7 +634,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
 
   useEffect(() => {
     loadIntegrated();
-  }, [date]);
+  }, [date, startTime, endTime]);
 
   function toggle(key) {
     setSelected((current) => current.includes(key)
@@ -650,35 +662,21 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
   const aEnergy = aMeta.kind === "power" ? analysisIntegrate(aPoints, compareA === "estimatedModulePower" ? 90 : 30) : null;
   const bEnergy = bMeta.kind === "power" ? analysisIntegrate(bPoints, compareB === "estimatedModulePower" ? 90 : 30) : null;
 
+  const calibrationFactor = Number(energyCalibration?.correction?.factor || 1);
   const rawModuleEnergy = ["pv1Power","pv2Power","pv3Power","pv4Power"].map((key) => ({
     key,
     energy: analysisIntegrate(clipped(key), 30)
   }));
-  const rawDcModulesTotal = rawModuleEnergy.reduce((s, x) => s + x.energy, 0);
-
-  const pvCounterPoints = clipped("PVEnergyTotal");
-  const pvCounterDelta = pvCounterPoints.length >= 2
-    ? Number(pvCounterPoints[pvCounterPoints.length - 1].value) - Number(pvCounterPoints[0].value)
-    : null;
-  const dcCorrectionFactor = Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0 && rawDcModulesTotal > 0
-    ? pvCounterDelta / rawDcModulesTotal
-    : 1;
 
   const moduleEnergy = rawModuleEnergy.map((item) => ({
     ...item,
-    energy: item.energy * dcCorrectionFactor
+    energy: Number(energyCalibration?.totals?.[item.key] ?? (item.energy * calibrationFactor))
   }));
   const dcModulesTotal = moduleEnergy.reduce((s, x) => s + x.energy, 0);
 
-  const generationCounterPoints = clipped("generation");
-  const generationCounterDelta = generationCounterPoints.length >= 2
-    ? Number(generationCounterPoints[generationCounterPoints.length - 1].value) - Number(generationCounterPoints[0].value)
-    : null;
   const rawAcEnergy = analysisIntegrate(clipped("generationPower"), 30);
-  const acEnergy = Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
-    ? generationCounterDelta
-    : rawAcEnergy;
-  const energyEfficiency = dcModulesTotal > 0 ? (acEnergy / dcModulesTotal) * 100 : null;
+  const acEnergy = rawAcEnergy;
+  const energyEfficiency = null;
 
   return <section className="no-print" style={{
     background: "linear-gradient(180deg,#17172a,#111122)",
@@ -696,6 +694,19 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
     </div>
 
     <p style={{ color: loadedDate === date ? theme.muted : theme.warning, fontSize: 10, marginTop: 10 }}>{status}</p>
+
+    {energyCalibration?.correction && <div style={{
+      border: "1px solid " + theme.border, borderRadius: 11, padding: 10,
+      background: "rgba(124,58,237,.08)", marginBottom: 12, fontSize: 10.5
+    }}>
+      <b>Calibração diária da energia</b>
+      <div style={{ color: theme.muted, marginTop: 4 }}>
+        Energia oficial FoxESS: <b style={{ color: theme.text }}>{Number(energyCalibration.correction.officialDailyEnergyKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Integral bruta diária: <b style={{ color: theme.text }}>{Number(energyCalibration.correction.rawFullDayModuleSumKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Fator: <b style={{ color: theme.text }}>{Number(energyCalibration.correction.factor || 0).toFixed(4)}</b>
+        {" · "}Parcela do dia no recorte: <b style={{ color: theme.text }}>{energyCalibration.correction.selectedShareOfRawDay == null ? "-" : (Number(energyCalibration.correction.selectedShareOfRawDay) * 100).toFixed(1) + "%"}</b>
+      </div>
+    </div>}
 
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 10, marginTop: 12 }}>
       {analysisGroups.map((group) => <div key={group.title} style={{ border: "1px solid " + theme.border, borderRadius: 12, padding: 11, background: "rgba(255,255,255,.025)" }}>
@@ -739,8 +750,8 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
       <div style={{ border: "1px solid " + theme.border, borderRadius: 10, padding: 10, background: "rgba(124,58,237,.08)" }}>
         <div style={{ color: theme.muted, fontSize: 10 }}>Energia CA integrada</div>
         <div style={{ fontSize: 18, fontWeight: 800, marginTop: 3 }}>{acEnergy.toFixed(3)} kWh</div>
-        <div style={{ color: theme.muted, fontSize: 10 }}>Eficiência energética no recorte: {energyEfficiency == null ? "-" : energyEfficiency.toFixed(1) + "%"}</div>
-        <div style={{ color: theme.muted, fontSize: 9.5, marginTop: 3 }}>Energia calibrada pelos contadores acumulados da FoxESS.</div>
+        <div style={{ color: theme.muted, fontSize: 10 }}>Integral bruta da potência CA histórica. Não usada para calibrar os módulos.</div>
+        <div style={{ color: theme.muted, fontSize: 9.5, marginTop: 3 }}>A energia dos módulos usa a referência diária oficial da FoxESS.</div>
       </div>
     </div>
 
@@ -819,7 +830,7 @@ function todayIsoBrazil() {
 }
 
 async function fetchEnergyDayCached(date, startTime, endTime) {
-  const key = "foxess-energy-v7|" + date + "|" + startTime + "|" + endTime;
+  const key = "foxess-energy-v8|" + date + "|" + startTime + "|" + endTime;
   const today = todayIsoBrazil();
 
   if (typeof window !== "undefined" && date !== today) {
@@ -1037,6 +1048,7 @@ function EnergyAggregationPanel() {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("Selecione o período e clique em Carregar gráfico.");
   const [loading, setLoading] = useState(false);
+  const [calibrationInfo, setCalibrationInfo] = useState(null);
 
   function togglePV(key) {
     setSelectedPVKeys((current) =>
@@ -1067,6 +1079,7 @@ function EnergyAggregationPanel() {
           pv4Power: Number(item.pv4Power || 0)
         }));
         setRows(hourlyRows);
+        setCalibrationInfo(result.correction || null);
         setStatus(
           hourlyRows.length
             ? "Geração hora a hora em " + day.split("-").reverse().join("/") + ", considerando apenas " + cutStart + " a " + cutEnd + "."
@@ -1075,6 +1088,7 @@ function EnergyAggregationPanel() {
         return;
       }
 
+      setCalibrationInfo(null);
       const dates = mode === "month" ? dateListForMonth(month) : dateListForYear(year);
       const today = todayIsoBrazil();
       const usableDates = dates.filter((date) => date <= today);
@@ -1223,6 +1237,18 @@ function EnergyAggregationPanel() {
     </div>
 
     <p style={{ color: theme.muted, fontSize: 10.5, marginTop: 10 }}>{status}</p>
+
+    {calibrationInfo && <div style={{
+      border: "1px solid " + theme.border, borderRadius: 11, padding: 10,
+      background: "rgba(124,58,237,.08)", marginBottom: 12, fontSize: 10.5
+    }}>
+      <b>Calibração do dia</b>
+      <div style={{ color: theme.muted, marginTop: 4 }}>
+        Energia oficial FoxESS: <b style={{ color: theme.text }}>{Number(calibrationInfo.officialDailyEnergyKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Integral bruta: <b style={{ color: theme.text }}>{Number(calibrationInfo.rawFullDayModuleSumKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Fator: <b style={{ color: theme.text }}>{Number(calibrationInfo.factor || 0).toFixed(4)}</b>
+      </div>
+    </div>}
 
     <EnergyBarChart rows={rows} selectedPVKeys={selectedPVKeys} fileName={energyFileName} />
 
