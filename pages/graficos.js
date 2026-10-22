@@ -159,6 +159,7 @@ const analysisGroups = [
     title: "Meteorologia e inversor",
     items: [
       { key: "irradiance", label: "Irradiância INMET A514", unit: "W/m²", kind: "irradiance" },
+      { key: "inmetAirTemp", label: "Temperatura do ar INMET A514", unit: "°C", kind: "temperature" },
       { key: "invTemperation", label: "Temperatura do inversor", unit: "°C", kind: "temperature" },
       { key: "invEfficiency", label: "Eficiência instantânea CC → CA", unit: "%", kind: "efficiency" }
     ]
@@ -575,6 +576,9 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
         map.irradiance = (inmet.rows || [])
           .filter((r) => Number.isFinite(Number(r.irradianceWm2)))
           .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.irradianceWm2) }));
+        map.inmetAirTemp = (inmet.rows || [])
+          .filter((r) => Number.isFinite(Number(r.airTemperatureC)))
+          .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.airTemperatureC) }));
         map.estimatedModulePower = (inmet.rows || [])
           .filter((r) => Number.isFinite(Number(r.estimatedModulePowerKw)))
           .map((r) => ({ timestamp: Number(r.timestamp), time: r.time, value: Number(r.estimatedModulePowerKw) }));
@@ -729,7 +733,7 @@ function IntegratedAnalysisPanel({ date, startTime, endTime }) {
       </label>
       <button type="button" onClick={() => { setSelected(["pv1Power","pv2Power","pv3Power","pv4Power","estimatedModulePower"]); setScaleMode("real"); }} style={secondaryButton}>Preset potência FV</button>
       <button type="button" onClick={() => { setSelected(["pv1Current","pv2Current","pv3Current","pv4Current"]); setScaleMode("real"); }} style={secondaryButton}>Preset correntes</button>
-      <button type="button" onClick={() => { setSelected(["temp_sensor2","temp_sensor3","temp_sensor6","temp_sensor7","temp_sensor8","temp_sensor9","irradiance"]); setScaleMode("normalized"); }} style={secondaryButton}>Preset térmico + irradiância</button>
+      <button type="button" onClick={() => { setSelected(["temp_sensor2","temp_sensor3","temp_sensor6","temp_sensor7","temp_sensor8","temp_sensor9","inmetAirTemp","irradiance"]); setScaleMode("normalized"); }} style={secondaryButton}>Preset térmico + irradiância</button>
       <button type="button" onClick={() => { setSelected(["pv1EnergyInt","pv2EnergyInt","pv3EnergyInt","pv4EnergyInt","acEnergyInt"]); setScaleMode("real"); }} style={secondaryButton}>Preset energias</button>
     </div>
 
