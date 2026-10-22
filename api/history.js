@@ -12,7 +12,7 @@ const FOXESS_VARIABLES = [
   "pv4Volt","pv4Current","pv4Power",
   "RVolt","RCurrent","RFreq","RPower",
   "generationPower","invTemperation",
-  "PVEnergyTotal","generation"
+  "PVEnergyTotal","generation","todayYield"
 ];
 
 function makeFoxessHeaders(path, token) {
@@ -387,15 +387,16 @@ async function handleFoxessEnergyDay(req, res) {
   const pvCounterDelta = cumulativeDelta(normalized.series.PVEnergyTotal?.points || []);
   const generationCounterDelta = cumulativeDelta(normalized.series.generation?.points || []);
 
-  // todayYield is the preferred daily reference because it is the value shown by FoxESS
-  // for the day. Some FoxESS models label its unit inconsistently, but semantically it is
-  // the accumulated daily yield. If absent, fall back to cumulative energy counters.
-  const officialDailyEnergy = Number.isFinite(todayYieldLast) && todayYieldLast >= 0
-    ? todayYieldLast
-    : Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
-      ? generationCounterDelta
-      : Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0
-        ? pvCounterDelta
+  // The cumulative energy counters matched the daily value shown in the FoxESS app
+  // during validation. Prefer them as the absolute daily energy reference.
+  // todayYield is kept as a secondary fallback because this device reports it with an
+  // inconsistent unit label ("kW") despite behaving as accumulated daily energy.
+  const officialDailyEnergy = Number.isFinite(generationCounterDelta) && generationCounterDelta >= 0
+    ? generationCounterDelta
+    : Number.isFinite(pvCounterDelta) && pvCounterDelta >= 0
+      ? pvCounterDelta
+      : Number.isFinite(todayYieldLast) && todayYieldLast >= 0
+        ? todayYieldLast
         : null;
 
   const dailyScale = officialDailyEnergy !== null && rawFullDaySum > 0
@@ -452,7 +453,9 @@ async function handleFoxessEnergyDay(req, res) {
     hourly,
     correction: {
       method: officialDailyEnergy !== null
-        ? (Number.isFinite(todayYieldLast) ? "foxess_todayYield_daily_reference" : "foxess_cumulative_counter_fallback")
+        ? (Number.isFinite(generationCounterDelta) || Number.isFinite(pvCounterDelta)
+          ? "foxess_cumulative_energy_reference"
+          : "foxess_todayYield_fallback")
         : "raw_power_integration_fallback",
       officialDailyEnergyKWh: officialDailyEnergy,
       todayYieldLast: todayYieldLast,
