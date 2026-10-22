@@ -934,6 +934,9 @@ async function handleInmet(req, res) {
       const radiationKjM2 = parseNumber(
         row.RAD_GLO ?? row.RADIACAO_GLOBAL ?? row.radiacao_global ?? row.radiacao
       );
+      const airTemperatureC = parseNumber(
+        row.TEM_INS ?? row.TEMP_INS ?? row.TEMPERATURA ?? row.temperatura ?? row.temp
+      );
       const irradianceWm2 = radiationKjM2 === null ? null : radiationKjM2 / 3.6;
       const estimatedModulePowerKw = irradianceWm2 === null
         ? null
@@ -944,6 +947,7 @@ async function handleInmet(req, res) {
         time: timestamp ? new Date(timestamp).toISOString() : null,
         radiationKjM2,
         irradianceWm2,
+        airTemperatureC,
         estimatedModulePowerKw,
       };
     }).filter((row) => row.timestamp).sort((a,b) => a.timestamp - b.timestamp);
@@ -953,7 +957,7 @@ async function handleInmet(req, res) {
       station: INMET_STATION,
       date,
       modulePowerW,
-      note: "Irradiância média horária estimada a partir da radiação global horizontal do INMET. A estimativa FV é referência simples e não corrige plano inclinado, temperatura, bifacialidade ou perdas.",
+      note: "Dados horários da estação INMET A514. A irradiância média horária é estimada a partir da radiação global horizontal e a temperatura corresponde à temperatura instantânea do ar informada pela estação. A estimativa FV é apenas referência simples.",
       rows,
     });
   } catch (error) {
