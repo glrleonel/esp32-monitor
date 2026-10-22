@@ -769,7 +769,7 @@ async function handleFoxessIntegrationAudit(req, res) {
   const begin = localDateTimeMs(date,startTime);
   const end = Math.min(localDateTimeMs(date,endTime),Date.now());
   const path="/op/v0/device/history/query";
-  const variables=["pvPower","generationPower","PVEnergyTotal","generation"];
+  const variables=["pvPower","generationPower","PVEnergyTotal","generation","todayYield"];
 
   const fox=await foxessPost(path,token,{sn,variables,begin,end});
   if(!fox.ok || (fox.data?.errno!==undefined && fox.data.errno!==0)){
@@ -820,6 +820,13 @@ async function handleFoxessIntegrationAudit(req, res) {
   const genDelta=cumulativeDelta(n.series.generation?.points||[]);
   const genIntegrated=integrateSeriesWindow(n.series.generationPower?.points||[],begin,end,30).energy;
 
+  const todayYieldPoints=[...(n.series.todayYield?.points||[])]
+    .filter((p)=>Number.isFinite(Number(p.value)))
+    .sort((a,b)=>a.timestamp-b.timestamp);
+  const todayYieldFirst=todayYieldPoints.length?Number(todayYieldPoints[0].value):null;
+  const todayYieldLast=todayYieldPoints.length?Number(todayYieldPoints[todayYieldPoints.length-1].value):null;
+  const todayYieldMax=todayYieldPoints.length?Math.max(...todayYieldPoints.map((p)=>Number(p.value))):null;
+
   const topSegments=[...segments].sort((a,b)=>b.energyKWh-a.energyKWh).slice(0,20);
   const sampleStep=Math.max(1,Math.floor(segments.length/20));
   const sampled=segments.filter((_,idx)=>idx%sampleStep===0).slice(0,25);
@@ -839,7 +846,15 @@ async function handleFoxessIntegrationAudit(req, res) {
     integratedGenerationPowerKWh:genIntegrated,
     pvCounterDeltaKWh:pvDelta,
     generationCounterDeltaKWh:genDelta,
+    todayYield:{
+      unit:n.series.todayYield?.unit||null,
+      points:todayYieldPoints.length,
+      first:todayYieldFirst,
+      last:todayYieldLast,
+      max:todayYieldMax
+    },
     ratioPvIntegralToCounter:Number.isFinite(pvDelta)&&pvDelta>0?integrated/pvDelta:null,
+    ratioPvIntegralToTodayYield:Number.isFinite(todayYieldLast)&&todayYieldLast>0?integrated/todayYieldLast:null,
     longGaps:gaps,
     sampledSegments:sampled,
     topEnergySegments:topSegments
