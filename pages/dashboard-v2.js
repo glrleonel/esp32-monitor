@@ -711,7 +711,7 @@ function integratePowerPoints(points, maxGapMinutes = 30) {
   return energy;
 }
 
-function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys }) {
+function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, selectedPVKeys, calibratedEnergy }) {
   const [hoverMinute, setHoverMinute] = useState(null);
   const start = timeToMinutes(startTime);
   const end = timeToMinutes(endTime);
@@ -782,20 +782,13 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
   const rawModuleEnergies = keys.map((key) => ({ key, energy: integratePowerPoints(clippedFox(key), 30) }));
   const rawModuleTotal = rawModuleEnergies.reduce((sum, item) => sum + item.energy, 0);
 
-  const energyCounterPoints = clippedFox("PVEnergyTotal");
-  const counterDelta = energyCounterPoints.length >= 2
-    ? Number(energyCounterPoints[energyCounterPoints.length - 1].value) - Number(energyCounterPoints[0].value)
-    : null;
-  const correctionFactor = Number.isFinite(counterDelta) && counterDelta >= 0 && rawModuleTotal > 0
-    ? counterDelta / rawModuleTotal
-    : 1;
-
-  const moduleEnergies = rawModuleEnergies.map((item) => ({
-    ...item,
-    energy: item.energy * correctionFactor
+  const moduleEnergies = keys.map((key) => ({
+    key,
+    energy: Number(calibratedEnergy?.totals?.[key] ?? 0)
   }));
   const totalEnergy = moduleEnergies.reduce((sum, item) => sum + item.energy, 0);
   const estimatedEnergy = integratePowerPoints(estimated, 90);
+  const calibration = calibratedEnergy?.correction || null;
 
   const hoverReadings = hoverMinute === null ? [] : [
     ...keys.map((key) => ({
@@ -902,6 +895,18 @@ function SolarGenerationChart({ foxSeries, inmetRows, startTime, endTime, select
       <span><b style={{ color: "#facc15" }}>●</b> Estimativa por irradiância INMET</span>
     </div>
 
+    {calibration && <div style={{
+      marginTop: 12, border: "1px solid " + theme.border, borderRadius: 12,
+      padding: 10, background: "rgba(124,58,237,.08)", fontSize: 10.5
+    }}>
+      <b>Calibração de energia</b>
+      <div style={{ color: theme.muted, marginTop: 4 }}>
+        Energia oficial FoxESS: <b style={{ color: theme.text }}>{Number(calibration.officialDailyEnergyKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Integral bruta diária dos módulos: <b style={{ color: theme.text }}>{Number(calibration.rawFullDayModuleSumKWh || 0).toFixed(3)} kWh</b>
+        {" · "}Fator diário: <b style={{ color: theme.text }}>{Number(calibration.factor || 0).toFixed(4)}</b>
+      </div>
+    </div>}
+
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginTop: 14 }}>
       {moduleEnergies.map(({ key, energy }) => <div key={key} style={{ border: "1px solid " + theme.border, borderRadius: 12, padding: 11, background: "rgba(255,255,255,.035)" }}>
         <div style={{ color: theme.muted, fontSize: 11 }}>{key.replace("Power", "").toUpperCase()} no intervalo</div>
@@ -937,6 +942,7 @@ export default function Dashboard() {
   const [solarEndTime, setSolarEndTime] = useState("18:30");
   const [selectedPVKeys, setSelectedPVKeys] = useState(["pv1Power", "pv2Power", "pv3Power"]);
   const [solarMessage, setSolarMessage] = useState("Carregando dados elétricos...");
+  const [solarEnergy, setSolarEnergy] = useState(null);
 
   async function loadData() {
     try {
@@ -971,17 +977,21 @@ export default function Dashboard() {
     setSolarMessage("Carregando geração de " + solarDate + "...");
     setFoxSeries({});
     setInmetRows([]);
+    setSolarEnergy(null);
     try {
-      const [foxResponse, inmetResponse] = await Promise.all([
+      const [foxResponse, inmetResponse, energyResponse] = await Promise.all([
         fetch("/api/history?source=foxess-history&date=" + solarDate + "&startTime=05:00&endTime=19:30").then((r) => r.json()),
-        fetch("/api/history?source=inmet&date=" + solarDate + "&modulePowerW=610").then((r) => r.json())
+        fetch("/api/history?source=inmet&date=" + solarDate + "&modulePowerW=610").then((r) => r.json()),
+        fetch("/api/history?source=foxess-energy-day&date=" + solarDate + "&startTime=" + solarStartTime + "&endTime=" + solarEndTime).then((r) => r.json())
       ]);
       if (foxResponse.ok) setFoxSeries(foxResponse.series || {});
       if (inmetResponse.ok) setInmetRows(inmetResponse.rows || []);
+      if (energyResponse.ok) setSolarEnergy(energyResponse);
       const messages = [];
       if (!foxResponse.ok) messages.push("FoxESS: " + (foxResponse.message || foxResponse.error || "sem dados"));
       else if (!foxResponse.pointCount) messages.push("FoxESS: sem pontos históricos nesta data");
       if (!inmetResponse.ok) messages.push("INMET: " + (inmetResponse.detail || inmetResponse.error || "sem dados"));
+      if (!energyResponse.ok) messages.push("Energia: " + (energyResponse.message || energyResponse.error || "sem dados"));
       const suffix = foxResponse.ok && foxResponse.pointCount
         ? "FoxESS: " + foxResponse.pointCount + " pontos"
         : "";
@@ -1260,6 +1270,7 @@ export default function Dashboard() {
         startTime={solarStartTime}
         endTime={solarEndTime}
         selectedPVKeys={selectedPVKeys}
+        calibratedEnergy={solarEnergy}
       />
       <p style={{ color: theme.muted, fontSize: 10, marginBottom: 0 }}>
         A energia dos módulos é distribuída proporcionalmente às curvas de potência, mas calibrada pelo contador acumulado de energia da FoxESS para que a soma feche com a energia real do período. A estimativa INMET usa 610 W por módulo e irradiância global horizontal.
